@@ -40,7 +40,6 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-          # Đã xóa cache: gradle ở đây để tránh lỗi tìm kiếm file quá sớm
 
       - name: Verify Java
         shell: bash
@@ -89,7 +88,7 @@ jobs:
           echo "Build Tools ${BUILD_TOOLS}: OK"
 
       # ============================================
-      # 4. LOCATE ANDROID PROJECT (Đã di chuyển lên trước Gradle)
+      # 4. LOCATE ANDROID PROJECT
       # ============================================
       - name: Locate Android project
         shell: bash
@@ -106,9 +105,6 @@ jobs:
               | head -n 1
           )
 
-          # ----------------------------------------
-          # Project already extracted
-          # ----------------------------------------
           if [ -n "$SETTINGS_FILE" ]; then
 
             PROJECT_DIR=$(dirname "$SETTINGS_FILE")
@@ -176,16 +172,17 @@ jobs:
           echo "======================================"
 
       # ============================================
-      # 5. GRADLE 8.11.1 (Đã di chuyển xuống đây)
+      # 5. GRADLE 8.11.1
       # ============================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
-          build-root-directory: ${{ env.PROJECT_DIR }}
+          cache-disabled: true   # Tắt cache để tránh lỗi tìm kiếm tệp trong dự án ZIP
 
       - name: Verify Gradle
         shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -euo pipefail
           gradle --version
