@@ -14,22 +14,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Find Android project root
-        id: root
+      - name: Extract source ZIP
+        id: extract
         run: |
           set -euo pipefail
-          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
-            echo "dir=." >> "$GITHUB_OUTPUT"
-          elif [ -f "VILA_AI_V9_Android/settings.gradle" ]; then
-            echo "dir=VILA_AI_V9_Android" >> "$GITHUB_OUTPUT"
-          else
-            FOUND=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 || true)
-            if [ -z "$FOUND" ]; then
-              echo "::error::Không tìm thấy settings.gradle"
-              ls -la; exit 1
-            fi
-            echo "dir=$(dirname "$FOUND")" >> "$GITHUB_OUTPUT"
+          echo "=== Cấu trúc repo ban đầu ==="
+          ls -la
+
+          # Tìm file zip
+          ZIP=$(find . -maxdepth 2 -name "*.zip" -not -path "./.git/*" | head -n 1 || true)
+          if [ -z "$ZIP" ]; then
+            echo "::error::Không tìm thấy file .zip trong repo"
+            exit 1
           fi
+          echo "Tìm thấy ZIP: $ZIP"
+
+          # Giải nén
+          rm -rf _source
+          mkdir -p _source
+          unzip -o "$ZIP" -d _source
+
+          echo "=== Nội dung _source/ ==="
+          ls -la _source/
+
+          # Tìm settings.gradle trong _source (đề phòng zip có folder con)
+          SETTINGS=$(find _source -name "settings.gradle" -o -name "settings.gradle.kts" | head -n 1 || true)
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::Không tìm thấy settings.gradle trong ZIP"
+            find _source -type f | head -50
+            exit 1
+          fi
+
+          ROOT_DIR=$(dirname "$SETTINGS")
+          echo "Thư mục project: $ROOT_DIR"
+          echo "dir=$ROOT_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -43,35 +61,206 @@ jobs:
       - name: Install SDK packages
         run: |
           set -euo pipefail
-          SDK="\( {ANDROID_SDK_ROOT:- \){ANDROID_HOME:-}}"
-          SM=$(find "$SDK" -type f -name sdkmanager 2>/dev/null | head -n 1 || which sdkmanager)
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          echo "SDK = $SDK"
+          SM="${SDK}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SM" ]; then
+            SM=$(command -v sdkmanager || true)
+          fi
+          if [ -z "$SM" ] || [ ! -x "$SM" ]; then
+            echo "::error::Không tìm thấy sdkmanager"
+            exit 1
+          fi
           yes 2>/dev/null | "$SM" --licenses >/dev/null || true
-          "$SM" --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" || \
-          "$SM" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          "$SM" --install "platforms;android-35" "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
       - name: Write local.properties
-        working-directory: ${{ steps.root.outputs.dir }}
+        working-directory: ${{ steps.extract.outputs.dir }}
         run: |
-          SDK="\( {ANDROID_SDK_ROOT:- \){ANDROID_HOME:-}}"
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           echo "sdk.dir=$SDK" > local.properties
+          cat local.properties
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
-        working-directory: ${{ steps.root.outputs.dir }}
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Grant execute permission for gradlew
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          if [ -f gradlew ]; then chmod +x gradlew; fi
 
-      - name: Find and upload APK
-        working-directory: ${{ steps.root.outputs.dir }}
+      - name: Show gradle files (debug)
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          ls -la
+          echo "=== settings.gradle ==="
+          cat settings.gradle || true
+          echo "=== build.gradle (root) ==="
+          cat build.gradle || true
+          echo "=== app/build.gradle ==="
+          cat app/build.gradle || true
+
+      - name: Build debug APK
+        working-directory: ${{ steps.extract.outputs.dir }}
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8"
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug --stacktrace --no-daemon
+          else
+            gradle assembleDebug --stacktrace --no-daemon
+          fi
+
+      - name: Find and stage APK
+        working-directory: ${{ steps.extract.outputs.dir }}
         run: |
           set -euo pipefail
-          APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
+          APK=$(find . -type f -name "*.apk" -path "*outputs/apk*" | head -n 1 || true)
+          if [ -z "$APK" ]; then
+            echo "::error::Không tìm thấy APK sau khi build"
+            find . -name "*.apk" 2>/dev/null || true
+            exit 1
+          fi
+          echo "Found APK: $APK"
           cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
+          ls -la "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VILA-Pro-V17-debug
+          path: VILA-Pro-V17-debug.apk
+          if-no-files-found: error
+          retention-days: 30name: VILA Pro V17 - Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract source ZIP
+        id: extract
+        run: |
+          set -euo pipefail
+          echo "=== Cấu trúc repo ban đầu ==="
+          ls -la
+
+          # Tìm file zip
+          ZIP=$(find . -maxdepth 2 -name "*.zip" -not -path "./.git/*" | head -n 1 || true)
+          if [ -z "$ZIP" ]; then
+            echo "::error::Không tìm thấy file .zip trong repo"
+            exit 1
+          fi
+          echo "Tìm thấy ZIP: $ZIP"
+
+          # Giải nén
+          rm -rf _source
+          mkdir -p _source
+          unzip -o "$ZIP" -d _source
+
+          echo "=== Nội dung _source/ ==="
+          ls -la _source/
+
+          # Tìm settings.gradle trong _source (đề phòng zip có folder con)
+          SETTINGS=$(find _source -name "settings.gradle" -o -name "settings.gradle.kts" | head -n 1 || true)
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::Không tìm thấy settings.gradle trong ZIP"
+            find _source -type f | head -50
+            exit 1
+          fi
+
+          ROOT_DIR=$(dirname "$SETTINGS")
+          echo "Thư mục project: $ROOT_DIR"
+          echo "dir=$ROOT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          echo "SDK = $SDK"
+          SM="${SDK}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SM" ]; then
+            SM=$(command -v sdkmanager || true)
+          fi
+          if [ -z "$SM" ] || [ ! -x "$SM" ]; then
+            echo "::error::Không tìm thấy sdkmanager"
+            exit 1
+          fi
+          yes 2>/dev/null | "$SM" --licenses >/dev/null || true
+          "$SM" --install "platforms;android-35" "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Write local.properties
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          echo "sdk.dir=$SDK" > local.properties
+          cat local.properties
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Grant execute permission for gradlew
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          if [ -f gradlew ]; then chmod +x gradlew; fi
+
+      - name: Show gradle files (debug)
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          ls -la
+          echo "=== settings.gradle ==="
+          cat settings.gradle || true
+          echo "=== build.gradle (root) ==="
+          cat build.gradle || true
+          echo "=== app/build.gradle ==="
+          cat app/build.gradle || true
+
+      - name: Build debug APK
+        working-directory: ${{ steps.extract.outputs.dir }}
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8"
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug --stacktrace --no-daemon
+          else
+            gradle assembleDebug --stacktrace --no-daemon
+          fi
+
+      - name: Find and stage APK
+        working-directory: ${{ steps.extract.outputs.dir }}
+        run: |
+          set -euo pipefail
+          APK=$(find . -type f -name "*.apk" -path "*outputs/apk*" | head -n 1 || true)
+          if [ -z "$APK" ]; then
+            echo "::error::Không tìm thấy APK sau khi build"
+            find . -name "*.apk" 2>/dev/null || true
+            exit 1
+          fi
+          echo "Found APK: $APK"
+          cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
+          ls -la "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
