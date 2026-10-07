@@ -40,7 +40,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
+          # Đã xóa cache: gradle ở đây để tránh lỗi tìm kiếm file quá sớm
 
       - name: Verify Java
         shell: bash
@@ -60,21 +60,7 @@ jobs:
           fi
 
       # ============================================
-      # 3. GRADLE 8.11.1
-      # ============================================
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
-
-      - name: Verify Gradle
-        shell: bash
-        run: |
-          set -euo pipefail
-          gradle --version
-
-      # ============================================
-      # 4. ANDROID SDK
+      # 3. ANDROID SDK
       # ============================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -103,7 +89,7 @@ jobs:
           echo "Build Tools ${BUILD_TOOLS}: OK"
 
       # ============================================
-      # 5. LOCATE ANDROID PROJECT
+      # 4. LOCATE ANDROID PROJECT (Đã di chuyển lên trước Gradle)
       # ============================================
       - name: Locate Android project
         shell: bash
@@ -188,6 +174,21 @@ jobs:
           echo "PROJECT_DIR"
           echo "$PROJECT_DIR"
           echo "======================================"
+
+      # ============================================
+      # 5. GRADLE 8.11.1 (Đã di chuyển xuống đây)
+      # ============================================
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          build-root-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Verify Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --version
 
       # ============================================
       # 6. VERIFY ANDROID PROJECT
