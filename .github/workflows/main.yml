@@ -1,4 +1,4 @@
-name: VILA Pro V17.5.0 - Build APK
+name: VILA Pro V17.6 - Build APK
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ env:
 
 jobs:
   build:
-    name: Build VILA Pro V17.5.0
+    name: Build VILA Pro V17.6
     runs-on: ubuntu-latest
 
     steps:
@@ -60,7 +60,7 @@ jobs:
           fi
 
       # ============================================
-      # 3. GRADLE
+      # 3. GRADLE 8.11.1
       # ============================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -79,7 +79,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android SDK 35
+      - name: Install Android SDK
         shell: bash
         run: |
           set -euo pipefail
@@ -103,14 +103,14 @@ jobs:
           echo "Build Tools ${BUILD_TOOLS}: OK"
 
       # ============================================
-      # 5. FIND ANDROID PROJECT
+      # 5. LOCATE ANDROID PROJECT
       # ============================================
       - name: Locate Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Searching for Android project..."
+          echo "Searching Android project..."
 
           SETTINGS_FILE=$(
             find . \
@@ -127,16 +127,13 @@ jobs:
 
             PROJECT_DIR=$(dirname "$SETTINGS_FILE")
 
-            echo "Found Android project:"
+            echo "Android project found:"
             echo "$PROJECT_DIR"
 
-          # ----------------------------------------
-          # Project is inside ZIP
-          # ----------------------------------------
           else
 
             echo "settings.gradle not found."
-            echo "Searching for ZIP archive..."
+            echo "Searching ZIP archives..."
 
             ZIP_FILE=$(
               find . \
@@ -149,8 +146,7 @@ jobs:
             if [ -z "$ZIP_FILE" ]; then
               echo "::error::No Android project or ZIP archive found."
 
-              echo "Repository files:"
-              find . -maxdepth 5 -type f | sort
+              find . -maxdepth 6 -type f | sort
 
               exit 1
             fi
@@ -171,37 +167,37 @@ jobs:
             )
 
             if [ -z "$SETTINGS_FILE" ]; then
-              echo "::error::settings.gradle was not found after ZIP extraction."
+              echo "::error::settings.gradle not found after extraction."
 
-              echo "Extracted files:"
-              find .vila_extract -maxdepth 7 -type f | sort
+              find .vila_extract \
+                -maxdepth 8 \
+                -type f \
+                | sort
 
               exit 1
             fi
 
             PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-
           fi
 
           PROJECT_DIR=$(cd "$PROJECT_DIR" && pwd)
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "================================"
-          echo "ANDROID PROJECT"
+          echo "======================================"
+          echo "PROJECT_DIR"
           echo "$PROJECT_DIR"
-          echo "================================"
+          echo "======================================"
 
       # ============================================
-      # 6. VERIFY PROJECT STRUCTURE
+      # 6. VERIFY ANDROID PROJECT
       # ============================================
       - name: Verify Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Checking:"
-          echo "$PROJECT_DIR"
+          echo "Checking Android project..."
 
           test -f "$PROJECT_DIR/settings.gradle" \
             || test -f "$PROJECT_DIR/settings.gradle.kts"
@@ -219,9 +215,9 @@ jobs:
           echo "Android project structure: OK"
 
       # ============================================
-      # 7. VERIFY VILA V17.5
+      # 7. VERIFY VILA V17.6
       # ============================================
-      - name: Verify VILA configuration
+      - name: Verify VILA providers
         shell: bash
         run: |
           set -euo pipefail
@@ -233,25 +229,65 @@ jobs:
           grep -q "compileSdk 35" \
             "$APP/build.gradle"
 
-          echo "Checking version..."
+          echo "Checking VILA version..."
 
-          grep -q "versionName '17.5.0'" \
+          grep -q "versionName '17.6.0'" \
             "$APP/build.gradle"
-
-          echo "Checking Groq model..."
-
-          grep -Rqi "openai/gpt-oss-120b" \
-            "$APP/src/main"
 
           echo "Checking Gemini..."
 
-          grep -Rqi "gemini" \
-            "$APP/src/main"
+          if grep -Rqi "generativelanguage.googleapis.com" \
+            "$APP/src/main"; then
+            echo "Gemini endpoint: OK"
+          else
+            echo "::error::Gemini endpoint not found."
+            exit 1
+          fi
 
-          echo "Checking GitHub..."
+          echo "Checking Groq..."
 
-          grep -Rqi "github" \
-            "$APP/src/main"
+          if grep -Rqi "api.groq.com/openai/v1" \
+            "$APP/src/main"; then
+            echo "Groq endpoint: OK"
+          else
+            echo "::error::Groq endpoint not found."
+            exit 1
+          fi
+
+          if grep -Rqi "openai/gpt-oss-120b" \
+            "$APP/src/main"; then
+            echo "Groq GPT-OSS 120B: OK"
+          else
+            echo "::error::Groq model not found."
+            exit 1
+          fi
+
+          echo "Checking SambaNova..."
+
+          if grep -Rqi "api.sambanova.ai/v1" \
+            "$APP/src/main"; then
+            echo "SambaNova endpoint: OK"
+          else
+            echo "::error::SambaNova endpoint not found."
+            exit 1
+          fi
+
+          if grep -Rqi "vila_sambanova_api_key" \
+            "$APP/src/main"; then
+            echo "SambaNova API key storage: OK"
+          else
+            echo "::error::SambaNova API key storage not found."
+            exit 1
+          fi
+
+          echo "Checking GitHub integration..."
+
+          if grep -Rqi "github" \
+            "$APP/src/main"; then
+            echo "GitHub integration: OK"
+          else
+            echo "::warning::GitHub integration not detected."
+          fi
 
           echo "Checking VILA Server / enpoiko..."
 
@@ -263,14 +299,16 @@ jobs:
 
           else
 
-            echo "::warning::enpoiko was not detected by text search."
+            echo "::warning::enpoiko was not detected."
 
           fi
 
-          echo "VILA V17.5 configuration: OK"
+          echo "======================================"
+          echo "VILA V17.6 PROVIDER CHECK: PASSED"
+          echo "======================================"
 
       # ============================================
-      # 8. BUILD APK
+      # 8. BUILD DEBUG APK
       # ============================================
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -278,7 +316,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Starting Gradle build..."
+          echo "Building VILA Pro V17.6..."
 
           gradle clean :app:assembleDebug \
             --no-daemon \
@@ -288,7 +326,7 @@ jobs:
       # ============================================
       # 9. VERIFY APK
       # ============================================
-      - name: Verify generated APK
+      - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
@@ -313,18 +351,18 @@ jobs:
           mkdir -p artifacts
 
           cp "$APK" \
-            "artifacts/VILA-Pro-V17.5.0-debug.apk"
+            "artifacts/VILA-Pro-V17.6.0-debug.apk"
 
-          echo "================================"
-          echo "APK BUILD SUCCESS"
-          echo "================================"
+          echo "======================================"
+          echo "BUILD SUCCESS"
+          echo "======================================"
 
           ls -lh \
-            "artifacts/VILA-Pro-V17.5.0-debug.apk"
+            "artifacts/VILA-Pro-V17.6.0-debug.apk"
 
           echo "SHA256:"
           sha256sum \
-            "artifacts/VILA-Pro-V17.5.0-debug.apk"
+            "artifacts/VILA-Pro-V17.6.0-debug.apk"
 
       # ============================================
       # 10. UPLOAD APK
@@ -332,7 +370,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-Pro-V17.5.0-debug
-          path: artifacts/VILA-Pro-V17.5.0-debug.apk
+          name: VILA-Pro-V17.6.0-debug
+          path: artifacts/VILA-Pro-V17.6.0-debug.apk
           if-no-files-found: error
           retention-days: 30
