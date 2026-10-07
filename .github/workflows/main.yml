@@ -26,6 +26,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
 
       - name: Find or extract Android project
         shell: bash
@@ -34,24 +36,26 @@ jobs:
 
           echo "=== FIND ANDROID PROJECT ==="
 
-          GRADLEW=$(find . \
+          SETTINGS_FILE=$(find . \
             -type f \
-            -name "gradlew" \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
             ! -path "./.git/*" \
+            ! -path "./.vila_extract/*" \
             | head -n 1 || true)
 
-          if [ -z "$GRADLEW" ]; then
-            echo "gradlew not found."
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "Android project not found."
             echo "Searching ZIP..."
 
             ZIP_FILE=$(find . \
               -type f \
               -iname "*.zip" \
               ! -path "./.git/*" \
+              ! -path "./.vila_extract/*" \
               | head -n 1 || true)
 
             if [ -z "$ZIP_FILE" ]; then
-              echo "ERROR: No gradlew and no ZIP found."
+              echo "ERROR: No Android project or ZIP found."
               exit 1
             fi
 
@@ -64,32 +68,36 @@ jobs:
             echo "Extracting ZIP..."
             unzip -q -o "$ZIP_FILE" -d .vila_extract
 
-            GRADLEW=$(find .vila_extract \
+            SETTINGS_FILE=$(find .vila_extract \
               -type f \
-              -name "gradlew" \
+              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
               | head -n 1 || true)
 
-            if [ -z "$GRADLEW" ]; then
-              echo "ERROR: gradlew not found after extraction."
+            if [ -z "$SETTINGS_FILE" ]; then
+              echo "ERROR: settings.gradle not found after extraction."
+              echo "Extracted files:"
+              find .vila_extract -maxdepth 5 -type f | head -200
               exit 1
             fi
           fi
 
-          PROJECT_DIR=$(dirname "$GRADLEW")
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
           PROJECT_DIR=$(realpath "$PROJECT_DIR")
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Project:"
+          echo "Android project:"
           echo "$PROJECT_DIR"
-
-          echo "=== PROJECT FILES ==="
-          ls -la "$PROJECT_DIR"
 
           if [ ! -d "$PROJECT_DIR/app" ]; then
             echo "ERROR: app directory not found."
+            echo "Project contents:"
+            ls -la "$PROJECT_DIR"
             exit 1
           fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "=== PROJECT FOUND ==="
+          ls -la "$PROJECT_DIR"
 
       - name: Build app-debug.apk
         working-directory: ${{ env.PROJECT_DIR }}
@@ -97,16 +105,18 @@ jobs:
         run: |
           set -e
 
-          chmod +x ./gradlew
+          echo "=== BUILD DEBUG APK ==="
 
-          ./gradlew assembleDebug \
+          gradle assembleDebug \
             --no-daemon \
             --stacktrace
 
-      - name: Find APK
+      - name: Find app-debug.apk
         shell: bash
         run: |
           set -e
+
+          echo "=== SEARCH APK ==="
 
           APK=$(find "$PROJECT_DIR/app/build/outputs/apk" \
             -type f \
@@ -115,12 +125,19 @@ jobs:
 
           if [ -z "$APK" ]; then
             echo "ERROR: app-debug.apk not found."
+
+            echo "Available APK files:"
+            find "$PROJECT_DIR/app/build/outputs" \
+              -type f \
+              -name "*.apk" \
+              2>/dev/null || true
+
             exit 1
           fi
 
           cp "$APK" "$GITHUB_WORKSPACE/app-debug.apk"
 
-          echo "=== APK READY ==="
+          echo "APK READY:"
           ls -lh "$GITHUB_WORKSPACE/app-debug.apk"
 
       - name: Upload app-debug.apk
