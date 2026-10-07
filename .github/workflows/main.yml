@@ -15,9 +15,9 @@ concurrency:
 
 env:
   PROJECT_DIR: VILA_AI_V9_Android
-  GRADLE_VERSION: "8.11.1"
   ANDROID_API: "35"
   BUILD_TOOLS: "35.0.0"
+  GRADLE_VERSION: "8.11.1"
 
 jobs:
   build:
@@ -25,29 +25,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ==============================
       # 1. Checkout
-      # ==============================
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      # ==============================
       # 2. Java 17
-      # ==============================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ==============================
-      # 3. Verify Java
-      # ==============================
-      - name: Verify Java
+      - name: Verify Java 17
         shell: bash
         run: |
           set -e
-
           echo "JAVA_HOME=$JAVA_HOME"
           java -version
           javac -version
@@ -57,21 +49,24 @@ jobs:
             exit 1
           }
 
-      # ==============================
-      # 4. Setup Gradle
-      # ==============================
+      # 3. Gradle
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
 
-      # ==============================
-      # 5. Android SDK
-      # ==============================
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verify Gradle
+        shell: bash
+        run: |
+          set -e
+          gradle --version
 
-      - name: Install Android SDK packages
+      # 4. Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      # 5. Install SDK packages
+      - name: Install Android SDK 35
         shell: bash
         run: |
           set -e
@@ -83,10 +78,22 @@ jobs:
             "platforms;android-${ANDROID_API}" \
             "build-tools;${BUILD_TOOLS}"
 
-      # ==============================
-      # 6. Verify project
-      # ==============================
-      - name: Verify project
+      # 6. Verify SDK
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          sdkmanager --list_installed | grep -E \
+            "platform-tools|platforms;android-${ANDROID_API}|build-tools;${BUILD_TOOLS}"
+
+          test -d "$ANDROID_HOME/platforms/android-${ANDROID_API}"
+          test -d "$ANDROID_HOME/build-tools/${BUILD_TOOLS}"
+
+          echo "Android SDK OK."
+
+      # 7. Verify project
+      - name: Verify Android project
         shell: bash
         run: |
           set -e
@@ -96,12 +103,10 @@ jobs:
           test -f "$PROJECT_DIR/build.gradle"
           test -f "$PROJECT_DIR/app/build.gradle"
 
-          echo "Android project OK."
+          echo "Android project structure OK."
 
-      # ==============================
-      # 7. Verify VILA
-      # ==============================
-      - name: Verify VILA Pro 17.2.1
+      # 8. Verify VILA
+      - name: Verify VILA Pro
         shell: bash
         run: |
           set -e
@@ -112,23 +117,21 @@ jobs:
           test -f "$MAIN/assets/index.html"
           test -f "$MAIN/java/com/vila/ai/MainActivity.java"
 
-          grep -q "17.2.1" \
-            "$PROJECT_DIR/app/build.gradle"
+          grep -q "17.2.1" "$PROJECT_DIR/app/build.gradle"
+          grep -q "openai/gpt-oss-120b" "$MAIN/assets/index.html"
+          grep -qi "gemini" "$MAIN/assets/index.html"
+          grep -qi "github" "$MAIN/assets/index.html"
 
-          grep -q "openai/gpt-oss-120b" \
-            "$MAIN/assets/index.html"
+          # Keep VILA Server / enpoiko
+          if grep -RniE "enpoiko|vila_server_url|serverUrl" "$MAIN" >/dev/null 2>&1; then
+            echo "VILA Server / enpoiko configuration detected."
+          else
+            echo "::warning::Could not verify enpoiko by text search."
+          fi
 
-          grep -qi "gemini" \
-            "$MAIN/assets/index.html"
+          echo "VILA Pro verification OK."
 
-          grep -qi "github" \
-            "$MAIN/assets/index.html"
-
-          echo "VILA verification OK."
-
-      # ==============================
-      # 8. Build
-      # ==============================
+      # 9. Build
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -140,9 +143,7 @@ jobs:
             --stacktrace \
             --warning-mode all
 
-      # ==============================
-      # 9. Verify APK
-      # ==============================
+      # 10. Verify APK
       - name: Verify APK
         shell: bash
         run: |
@@ -153,19 +154,15 @@ jobs:
           test -s "$APK"
 
           mkdir -p artifacts
+          cp "$APK" "artifacts/VILA-Pro-V17.2.1-debug.apk"
 
-          cp "$APK" \
-            "artifacts/VILA-Pro-V17.2.1-debug.apk"
-
-          echo "APK:"
+          echo "APK generated successfully:"
           ls -lh artifacts/VILA-Pro-V17.2.1-debug.apk
 
           echo "SHA256:"
           sha256sum artifacts/VILA-Pro-V17.2.1-debug.apk
 
-      # ==============================
-      # 10. Upload
-      # ==============================
+      # 11. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
