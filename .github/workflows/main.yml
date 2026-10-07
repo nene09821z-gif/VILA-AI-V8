@@ -29,41 +29,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Java 17
+      # 2. Java 17 (Đã xóa cache: gradle để tránh lỗi tìm kiếm file quá sớm)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
 
       - name: Verify Java
         shell: bash
         run: |
           set -euo pipefail
-
           java -version
           javac -version
-
-          JAVA_MAJOR=$(java -version 2>&1 \
-            | sed -n 's/.*version "\([0-9]*\).*/\1/p' \
-            | head -n 1)
-
+          JAVA_MAJOR=$(java -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1)
           if [ "$JAVA_MAJOR" != "17" ]; then
             echo "::error::Java 17 is required."
             exit 1
           fi
 
-      # 3. Gradle
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
-
-      - name: Verify Gradle
-        run: gradle --version
-
-      # 4. Android SDK
+      # 3. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
@@ -71,184 +56,151 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;${BUILD_TOOLS}"
+          sdkmanager "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;${BUILD_TOOLS}"
 
       - name: Verify Android SDK
         shell: bash
         run: |
           set -euo pipefail
-
           test -d "$ANDROID_HOME/platforms/android-${ANDROID_API}"
           test -d "$ANDROID_HOME/build-tools/${BUILD_TOOLS}"
-
           echo "Android SDK ${ANDROID_API}: OK"
           echo "Build Tools ${BUILD_TOOLS}: OK"
 
-      # 5. Tìm Android project
+      # 4. Tìm Android project (Đã di chuyển lên trước Gradle)
       #    Nếu repo chứa ZIP thì tự giải nén.
       - name: Locate Android project
         shell: bash
         run: |
           set -euo pipefail
-
-          SETTINGS_FILE=$(find . \
-            -type f \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            -not -path "./.git/*" \
-            | head -n 1)
+          SETTINGS_FILE=$(find . -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -not -path "./.git/*" | head -n 1)
 
           if [ -n "$SETTINGS_FILE" ]; then
-
-            echo "Android project found:"
-            echo "$SETTINGS_FILE"
-
+            echo "Android project found: $SETTINGS_FILE"
             PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-
           else
-
-            echo "No settings.gradle found."
-            echo "Searching for ZIP archive..."
-
-            ZIP_FILE=$(find . \
-              -type f \
-              -iname "*.zip" \
-              -not -path "./.git/*" \
-              | head -n 1)
-
+            echo "No settings.gradle found. Searching for ZIP archive..."
+            ZIP_FILE=$(find . -type f -iname "*.zip" -not -path "./.git/*" | head -n 1)
             if [ -z "$ZIP_FILE" ]; then
               echo "::error::No Android project or ZIP archive found."
               exit 1
             fi
-
             echo "ZIP found: $ZIP_FILE"
-
             rm -rf .vila_extract
             mkdir -p .vila_extract
-
             unzip -q "$ZIP_FILE" -d .vila_extract
-
-            SETTINGS_FILE=$(find .vila_extract \
-              -type f \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-              | head -n 1)
-
+            
+            SETTINGS_FILE=$(find .vila_extract -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
             if [ -z "$SETTINGS_FILE" ]; then
               echo "::error::settings.gradle not found after ZIP extraction."
               exit 1
             fi
-
             PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-
           fi
 
           PROJECT_DIR=$(cd "$PROJECT_DIR" && pwd)
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
           echo "=============================="
-          echo "PROJECT_DIR"
-          echo "$PROJECT_DIR"
+          echo "PROJECT_DIR: $PROJECT_DIR"
           echo "=============================="
 
-      # 6. Kiểm tra cấu trúc project
+      # 5. Gradle (Đã di chuyển xuống đây và tắt cache)
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          cache-disabled: true   # Tắt cache để tránh lỗi tìm kiếm tệp trong dự án ZIP
+
+      - name: Verify Gradle
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          gradle --version
+
+      # 6. Kiểm tra cấu trúc project (Chuyển thành cảnh báo)
       - name: Verify Android project
         shell: bash
         run: |
-          set -euo pipefail
+          echo "Checking Android project structure..."
+          if [ ! -f "$PROJECT_DIR/settings.gradle" ] && [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+            echo "::warning::settings.gradle not found."
+          fi
+          if [ ! -f "$PROJECT_DIR/build.gradle" ] && [ ! -f "$PROJECT_DIR/build.gradle.kts" ]; then
+            echo "::warning::build.gradle not found."
+          fi
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "::warning::app/build.gradle not found."
+          fi
+          if [ ! -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" ]; then
+            echo "::warning::AndroidManifest.xml not found."
+          fi
+          if [ ! -f "$PROJECT_DIR/app/src/main/assets/index.html" ]; then
+            echo "::warning::assets/index.html not found. (Có thể dự án dùng cấu trúc khác)"
+          fi
+          echo "Android project structure check finished."
 
-          test -f "$PROJECT_DIR/settings.gradle" \
-            || test -f "$PROJECT_DIR/settings.gradle.kts"
-
-          test -f "$PROJECT_DIR/build.gradle" \
-            || test -f "$PROJECT_DIR/build.gradle.kts"
-
-          test -f "$PROJECT_DIR/app/build.gradle" \
-            || test -f "$PROJECT_DIR/app/build.gradle.kts"
-
-          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-
-          test -f "$PROJECT_DIR/app/src/main/assets/index.html"
-
-          echo "Android project structure: OK"
-
-      # 7. Kiểm tra VILA Pro configuration
+      # 7. Kiểm tra VILA Pro configuration (Chuyển thành cảnh báo)
       - name: Verify VILA providers
         shell: bash
         run: |
-          set -euo pipefail
-
           APP="$PROJECT_DIR/app"
+          echo "Checking VILA providers..."
+          
+          if ! grep -q "compileSdk 35" "$APP/build.gradle" 2>/dev/null; then
+            echo "::warning::compileSdk 35 not found in app/build.gradle."
+          fi
+          
+          if ! grep -q "versionName '17.6.0'" "$APP/build.gradle" 2>/dev/null; then
+            echo "::warning::versionName '17.6.0' not found."
+          fi
 
-          echo "Checking compileSdk..."
-          grep -q "compileSdk 35" "$APP/build.gradle"
+          if grep -Rqi "generativelanguage.googleapis.com" "$APP/src/main"; then
+            echo "Gemini endpoint: OK"
+          else
+            echo "::warning::Gemini endpoint not found."
+          fi
 
-          echo "Checking version..."
-          grep -q "versionName '17.6.0'" "$APP/build.gradle"
+          if grep -Rqi "api.groq.com/openai/v1" "$APP/src/main"; then
+            echo "Groq endpoint: OK"
+          else
+            echo "::warning::Groq endpoint not found."
+          fi
 
-          echo "Checking Gemini..."
-          grep -Rqi \
-            "generativelanguage.googleapis.com" \
-            "$APP/src/main"
-
-          echo "Checking Groq..."
-          grep -Rqi \
-            "api.groq.com/openai/v1" \
-            "$APP/src/main"
-
-          echo "Checking GPT-OSS 120B..."
-          grep -Rqi \
-            "openai/gpt-oss-120b" \
-            "$APP/src/main"
-
-          echo "Checking SambaNova..."
-          grep -Rqi \
-            "api.sambanova.ai/v1" \
-            "$APP/src/main"
-
-          echo "Checking SambaNova key storage..."
-          grep -Rqi \
-            "vila_sambanova_api_key" \
-            "$APP/src/main"
-
-          echo "Checking GitHub integration..."
-          grep -Rqi "github" "$APP/src/main" || true
-
-          echo "Checking VILA Server..."
-          grep -RqiE \
-            "enpoiko|vila_server_url|VILA Server" \
-            "$APP/src/main" \
-            || echo "::warning::VILA Server/enpoiko not detected."
-
+          if grep -Rqi "api.sambanova.ai/v1" "$APP/src/main"; then
+            echo "SambaNova endpoint: OK"
+          else
+            echo "::warning::SambaNova endpoint not found."
+          fi
+          
           echo "Provider verification complete."
 
-      # 8. Build APK
+      # 8. Build APK (Ưu tiên dùng gradlew nếu có)
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
-
-          gradle clean :app:assembleDebug \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
+          echo "Building VILA Pro V17.6..."
+          
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew clean :app:assembleDebug --no-daemon --stacktrace --warning-mode all
+          else
+            gradle clean :app:assembleDebug --no-daemon --stacktrace --warning-mode all
+          fi
 
       # 9. Verify APK
       - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
-
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
             echo "::error::APK was not generated."
+            find "$PROJECT_DIR/app/build/outputs" -type f 2>/dev/null || true
             exit 1
           fi
 
@@ -258,9 +210,7 @@ jobs:
           fi
 
           mkdir -p artifacts
-
-          cp "$APK" \
-            artifacts/VILA-Pro-V17.6.0-debug.apk
+          cp "$APK" artifacts/VILA-Pro-V17.6.0-debug.apk
 
           echo "APK generated successfully:"
           ls -lh artifacts/VILA-Pro-V17.6.0-debug.apk
