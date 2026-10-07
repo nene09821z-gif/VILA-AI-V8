@@ -14,30 +14,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract source ZIP
-        id: extract
+      - name: Find Android project root
+        id: root
         run: |
           set -euo pipefail
-          ls -la
-          ZIP=$(find . -maxdepth 2 -name "*.zip" -not -path "./.git/*" | head -n 1 || true)
-          if [ -z "$ZIP" ]; then
-            echo "::error::Không tìm thấy file .zip"
-            exit 1
+          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+            echo "Found project at repo root"
+          elif [ -f "VILA_AI_V9_Android/settings.gradle" ]; then
+            echo "dir=VILA_AI_V9_Android" >> "$GITHUB_OUTPUT"
+            echo "Found project at VILA_AI_V9_Android/"
+          else
+            FOUND=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 || true)
+            if [ -z "$FOUND" ]; then
+              echo "::error::Không tìm thấy settings.gradle — hãy đẩy đúng thư mục project Android lên root repo"
+              ls -la
+              exit 1
+            fi
+            DIR=$(dirname "$FOUND")
+            echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+            echo "Found project at $DIR"
           fi
-          echo "ZIP: $ZIP"
-          rm -rf _source
-          mkdir -p _source
-          unzip -o "$ZIP" -d _source
-          ls -la _source/
-          SETTINGS=$(find _source -name "settings.gradle" -o -name "settings.gradle.kts" | head -n 1 || true)
-          if [ -z "$SETTINGS" ]; then
-            echo "::error::Không tìm thấy settings.gradle"
-            find _source -type f | head -50
-            exit 1
-          fi
-          ROOT_DIR=$(dirname "$SETTINGS")
-          echo "Project dir: $ROOT_DIR"
-          echo "dir=$ROOT_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -45,66 +42,69 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK (manual)
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
         run: |
           set -euo pipefail
-          echo "=== Cài Android SDK ==="
-          mkdir -p "$HOME/android-sdk/cmdline-tools"
-          cd "$HOME/android-sdk/cmdline-tools"
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdtools.zip
-          unzip -q cmdtools.zip
-          mv cmdline-tools latest
-          rm cmdtools.zip
-          export ANDROID_SDK_ROOT="$HOME/android-sdk"
-          export ANDROID_HOME="$HOME/android-sdk"
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "=== SDK đã cài xong ==="
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
+          SDK="\( {ANDROID_SDK_ROOT:- \){ANDROID_HOME:-}}"
+          if [ -z "$SDK" ]; then
+            echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME chưa được set"
+            exit 1
+          fi
+          SM=$(find "$SDK" -type f -name sdkmanager 2>/dev/null | head -n 1 || true)
+          if [ -z "$SM" ]; then
+            SM=$(which sdkmanager || true)
+          fi
+          echo "sdkmanager=$SM"
+          yes 2>/dev/null | "$SM" --licenses >/dev/null || true
+          "$SM" --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" || \
+          "$SM" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
       - name: Write local.properties
-        working-directory: ${{ steps.extract.outputs.dir }}
+        working-directory: ${{ steps.root.outputs.dir }}
         run: |
-          echo "sdk.dir=$HOME/android-sdk" > local.properties
+          set -euo pipefail
+          SDK="\( {ANDROID_SDK_ROOT:- \){ANDROID_HOME:-}}"
+          echo "sdk.dir=$SDK" > local.properties
           cat local.properties
+          ls -la
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Grant execute permission for gradlew
-        working-directory: ${{ steps.extract.outputs.dir }}
-        run: |
-          if [ -f gradlew ]; then chmod +x gradlew; fi
-
       - name: Build debug APK
-        working-directory: ${{ steps.extract.outputs.dir }}
+        working-directory: ${{ steps.root.outputs.dir }}
         env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8"
-        run: |
-          if [ -f gradlew ]; then
-            ./gradlew assembleDebug --stacktrace --no-daemon
-          else
-            gradle assembleDebug --stacktrace --no-daemon
-          fi
-
-      - name: Find and stage APK
-        working-directory: ${{ steps.extract.outputs.dir }}
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
         run: |
           set -euo pipefail
-          APK=$(find . -type f -name "*.apk" -path "*outputs/apk*" | head -n 1 || true)
-          if [ -z "$APK" ]; then
-            echo "::error::Không tìm thấy APK"
-            find . -name "*.apk" 2>/dev/null || true
+          echo "Building in: $(pwd)"
+          ls -la
+          gradle help --no-daemon || true
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Find and upload APK
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          set -euo pipefail
+          echo "Searching APK..."
+          find app/build/outputs -type f -name "*.apk" -print || true
+          APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1 || true)
+          if [ -z "${APK:-}" ]; then
+            echo "::error::Build xong nhưng không có APK"
+            find app/build -type f 2>/dev/null | head -n 100 || true
             exit 1
           fi
+          echo "Found: $APK"
+          ls -lh "$APK"
           cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
-          ls -la "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
+          ls -lh "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
