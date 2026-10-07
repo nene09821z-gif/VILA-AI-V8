@@ -1,4 +1,4 @@
-name: VILA Pro V17.2.1 - Build APK
+name: Build APK from ZIP
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -40,25 +40,44 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # Chỉ định rõ gói cần thiết để tránh lỗi 'tools' đã bị Google xóa
+          packages: 'platform-tools'
 
       - name: Install Android SDK Components
         shell: bash
         run: |
           set -e
           yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${BUILD_TOOLS}" "platform-tools"
+          sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${BUILD_TOOLS}"
+
+      - name: Extract Project ZIP
+        shell: bash
+        run: |
+          set -e
+          # Tìm tệp .zip đầu tiên ở thư mục gốc
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::Không tìm thấy tệp ZIP nào trong repository. Vui lòng kiểm tra lại."
+            exit 1
+          fi
+          echo "Đang giải nén: $ZIP_FILE"
+          # Giải nén vào thư mục 'extracted_project'
+          unzip -q "$ZIP_FILE" -d extracted_project
+          echo "Giải nén hoàn tất."
 
       - name: Locate Android Project Root
         shell: bash
         run: |
           set -e
-          # Tìm file build ở mọi độ sâu thư mục (bỏ qua thư mục build ẩn)
-          FOUND_FILE=$(find . -not -path '*/.*' -not -path '*/build/*' \( -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts" \) | head -n 1)
+          # Tìm file build.gradle hoặc settings.gradle trong thư mục vừa giải nén
+          FOUND_FILE=$(find extracted_project -not -path '*/.*' \( -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts" \) | head -n 1)
 
           if [ -n "$FOUND_FILE" ]; then
             PROJECT_DIR=$(dirname "$FOUND_FILE")
           else
-            PROJECT_DIR="."
+            echo "::error::Không tìm thấy thư mục dự án Android sau khi giải nén."
+            exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -85,7 +104,7 @@ jobs:
           set -e
           mkdir -p artifacts
 
-          # Tìm file APK sinh ra trong thư mục outputs
+          # Tìm file APK sinh ra trong thư mục outputs của dự án đã giải nén
           APK_FILE=$(find "$PROJECT_DIR" -type f -name "*.apk" -path "*/outputs/apk/*" | head -n 1)
 
           if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then
@@ -93,18 +112,17 @@ jobs:
             exit 1
           fi
 
-          cp "$APK_FILE" "artifacts/VILA-Pro-V17.2.1-debug.apk"
+          cp "$APK_FILE" "artifacts/VILA-Pro-Debug.apk"
 
           echo "Đã đóng gói APK thành công:"
-          ls -lh artifacts/VILA-Pro-V17.2.1-debug.apk
+          ls -lh artifacts/VILA-Pro-Debug.apk
           echo "Mã SHA256:"
-          sha256sum artifacts/VILA-Pro-V17.2.1-debug.apk
+          sha256sum artifacts/VILA-Pro-Debug.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-Pro-V17.2.1-debug
-          path: artifacts/VILA-Pro-V17.2.1-debug.apk
+          name: VILA-Pro-Debug-APK
+          path: artifacts/VILA-Pro-Debug.apk
           if-no-files-found: error
           retention-days: 30
-          
