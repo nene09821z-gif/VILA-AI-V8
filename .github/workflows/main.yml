@@ -1,4 +1,4 @@
-name: VILA Pro V17.1 - Build APK
+name: VILA Pro V17.2 - Build APK
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    name: Build app-debug.apk
+    name: Build VILA Pro 17.2 APK
     runs-on: ubuntu-latest
 
     steps:
@@ -53,11 +53,7 @@ jobs:
             exit 0
           fi
 
-          ZIP_FILE="$(find . -type f -iname '*V17*.zip' ! -path './.git/*' -print -quit || true)"
-
-          if [ -z "$ZIP_FILE" ]; then
-            ZIP_FILE="$(find . -type f -iname '*.zip' ! -path './.git/*' -print -quit || true)"
-          fi
+          ZIP_FILE="$(find . -type f -iname '*.zip' ! -path './.git/*' -print -quit || true)"
 
           if [ -z "$ZIP_FILE" ]; then
             echo 'ERROR: Android project and ZIP archive were not found.'
@@ -89,32 +85,26 @@ jobs:
 
           cp -a "$SOURCE_DIR"/. "$PROJECT_DIR"/
 
-      - name: Verify project
+      - name: Verify project and VILA assets
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f "$PROJECT_DIR/settings.gradle" \
-            -o -f "$PROJECT_DIR/settings.gradle.kts"
-
-          test -f "$PROJECT_DIR/build.gradle" \
-            -o -f "$PROJECT_DIR/build.gradle.kts"
-
-          test -f "$PROJECT_DIR/app/build.gradle" \
-            -o -f "$PROJECT_DIR/app/build.gradle.kts"
-
+          test -f "$PROJECT_DIR/settings.gradle" -o -f "$PROJECT_DIR/settings.gradle.kts"
+          test -f "$PROJECT_DIR/app/build.gradle" -o -f "$PROJECT_DIR/app/build.gradle.kts"
           test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml"
           test -f "$PROJECT_DIR/app/src/main/assets/index.html"
-          test -f "$PROJECT_DIR/app/src/main/assets/vila_logo_pro.png"
           test -f "$PROJECT_DIR/app/src/main/assets/vila_avatar.png"
           test -f "$PROJECT_DIR/app/src/main/java/com/vila/ai/MainActivity.java"
 
-          if ! grep -q "versionName '17.1.0'" "$PROJECT_DIR/app/build.gradle"; then
-            echo 'ERROR: Expected VILA Pro version 17.1.0 was not found.'
-            exit 1
-          fi
+          grep -q "versionName '17.2.0'" "$PROJECT_DIR/app/build.gradle"
+          grep -q "openai/gpt-oss-120b" "$PROJECT_DIR/app/src/main/assets/index.html"
+          grep -q "gemini-3.1-flash-image" "$PROJECT_DIR/app/src/main/assets/index.html"
+          grep -q "gemini-3.1-flash-tts-preview" "$PROJECT_DIR/app/src/main/assets/index.html"
+          grep -q "startVoiceInput" "$PROJECT_DIR/app/src/main/java/com/vila/ai/MainActivity.java"
+          grep -q "saveBase64File" "$PROJECT_DIR/app/src/main/java/com/vila/ai/MainActivity.java"
 
-          echo 'VILA project/assets/version OK.'
+          echo 'VILA Pro 17.2 verification OK.'
 
       - name: Build debug APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -139,18 +129,18 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
 
           cp "$APK" \
-            "$GITHUB_WORKSPACE/artifacts/VILA-Pro-V17.1-debug.apk"
+            "$GITHUB_WORKSPACE/artifacts/VILA-Pro-V17.2-debug.apk"
 
           sha256sum \
-            "$GITHUB_WORKSPACE/artifacts/VILA-Pro-V17.1-debug.apk"
+            "$GITHUB_WORKSPACE/artifacts/VILA-Pro-V17.2-debug.apk"
 
           ls -lh \
-            "$GITHUB_WORKSPACE/artifacts/VILA-Pro-V17.1-debug.apk"
+            "$GITHUB_WORKSPACE/artifacts/VILA-Pro-V17.2-debug.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: VILA-Pro-V17.1-debug
-          path: artifacts/VILA-Pro-V17.1-debug.apk
+          name: VILA-Pro-V17.2-debug
+          path: artifacts/VILA-Pro-V17.2-debug.apk
           if-no-files-found: error
           retention-days: 30
