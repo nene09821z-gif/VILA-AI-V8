@@ -1,4 +1,4 @@
-name: Build VILA AI V9 APK
+name: Build VILA APK
 
 on:
   workflow_dispatch:
@@ -12,12 +12,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Find and extract VILA ZIP
+      - name: Find and extract VILA V12 ZIP
         run: |
-          ZIP=$(find . -maxdepth 2 -type f -name 'VILA_AI_V9_1_SERVER_SELECTOR.zip' | head -n 1)
+          ZIP=$(find . -type f -name 'VILA_AI_V12_ANDROID_COMPACT_VILA_IMAGE_ICON.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "Không tìm thấy VILA_AI_V9_1_SERVER_SELECTOR.zip"
+            echo "Khong tim thay VILA V12 ZIP"
             exit 1
           fi
 
@@ -27,7 +27,7 @@ jobs:
           ROOT=$(find vila_source -type f -name 'settings.gradle*' -printf '%h\n' | head -n 1)
 
           if [ -z "$ROOT" ]; then
-            echo "Không tìm thấy Android project"
+            echo "Khong tim thay Android project"
             exit 1
           fi
 
@@ -39,7 +39,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -50,5 +50,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-AI-V9-APK
+          name: VILA-V12-APK
           path: app/build/outputs/apk/debug/app-debug.apk
