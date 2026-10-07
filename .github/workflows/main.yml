@@ -1,0 +1,158 @@
+name: VILA AI - Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build VILA AI APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract project ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "=== Repository ==="
+          ls -la
+
+          # Nếu project đã được giải nén sẵn thì dùng trực tiếp.
+          if find . -maxdepth 3 -type f -name "settings.gradle*" | grep -q .; then
+            echo "Android project đã được giải nén."
+            exit 0
+          fi
+
+          # Tìm ZIP project.
+          ZIP_FILE=$(find . -maxdepth 3 -type f \
+            \( -iname "*.zip" \) \
+            ! -path "./.git/*" \
+            | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Không tìm thấy file ZIP project."
+            exit 1
+          fi
+
+          echo "ZIP được tìm thấy: $ZIP_FILE"
+
+          mkdir -p .vila_extract
+
+          unzip -o "$ZIP_FILE" -d .vila_extract
+
+          # Tìm thư mục chứa Android project.
+          ANDROID_DIR=$(find .vila_extract -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -printf '%h\n' \
+            | head -n 1)
+
+          if [ -z "$ANDROID_DIR" ]; then
+            echo "Không tìm thấy settings.gradle/settings.gradle.kts sau khi giải nén."
+            echo "Cấu trúc sau khi giải nén:"
+            find .vila_extract -maxdepth 4 -type f | head -200
+            exit 1
+          fi
+
+          echo "Android project: $ANDROID_DIR"
+
+          # Copy project ra root.
+          cp -a "$ANDROID_DIR"/. .
+
+          echo "=== Android project ==="
+          ls -la
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Make Gradle executable
+        shell: bash
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          else
+            echo "Không có gradlew."
+
+            if command -v gradle >/dev/null 2>&1; then
+              echo "Sử dụng Gradle hệ thống."
+            else
+              echo "Project không có gradlew và runner không có Gradle."
+              exit 1
+            fi
+          fi
+
+      - name: Check project structure
+        shell: bash
+        run: |
+          echo "=== Project files ==="
+          find . -maxdepth 3 -type f \
+            ! -path "./.git/*" \
+            | sort \
+            | head -300
+
+      - name: Validate JavaScript server
+        shell: bash
+        run: |
+          if [ -f "server/index.js" ]; then
+            node --check server/index.js
+          elif [ -f "server.js" ]; then
+            node --check server.js
+          else
+            echo "Không có server JavaScript để kiểm tra."
+          fi
+
+      - name: Build Debug APK
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "./gradlew" ]; then
+            ./gradlew clean assembleDebug --stacktrace
+          else
+            gradle clean assembleDebug --stacktrace
+          fi
+
+      - name: Find APK
+        shell: bash
+        run: |
+          echo "=== APK files ==="
+          find . -type f \
+            \( -name "*.apk" -o -name "*.aab" \) \
+            ! -path "./.git/*" \
+            -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VILA-AI-debug-apk
+          path: |
+            **/build/outputs/apk/**/*.apk
+            **/build/outputs/apk/*.apk
+          if-no-files-found: error
+          retention-days: 30
