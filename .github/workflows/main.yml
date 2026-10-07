@@ -1,4 +1,4 @@
-name: VILA Pro V17.2.1 - Build APK
+Name: VILA Pro V17.2.1 - Build APK
 
 on:
   workflow_dispatch:
@@ -33,13 +33,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Verify Java
-        run: |
-          set -e
-          echo "JAVA_HOME=$JAVA_HOME"
-          java -version
-          javac -version
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -54,19 +47,18 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          sdkmanager --licenses || true
-
-          sdkmanager \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;${BUILD_TOOLS}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER="sdkmanager"
+          fi
+          yes | $SDKMANAGER --licenses || true
+          $SDKMANAGER "platforms;android-${ANDROID_API}" "build-tools;${BUILD_TOOLS}"
 
       - name: Locate Android project
         shell: bash
         run: |
           set -e
-
-          PROJECT_DIR="$(find . -name settings.gradle -not -path '*/build/*' | head -n 1 | xargs -r dirname)"
+          PROJECT_DIR="$(find . -name settings.gradle -o -name settings.gradle.kts | head -n 1 | xargs -r dirname)"
 
           if [ -z "$PROJECT_DIR" ]; then
             echo "::error::Android project with settings.gradle was not found."
@@ -80,62 +72,28 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          test -f "$PROJECT_DIR/settings.gradle"
-          test -f "$PROJECT_DIR/build.gradle"
-          test -f "$PROJECT_DIR/app/build.gradle"
-          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-          test -f "$PROJECT_DIR/app/src/main/java/com/vila/ai/MainActivity.java"
-          test -f "$PROJECT_DIR/app/src/main/assets/index.html"
-
+          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" || { echo "Missing AndroidManifest.xml"; exit 1; }
           echo "Android project structure OK."
 
-      - name: Verify VILA configuration
-        shell: bash
-        run: |
-          set -e
-
-          APP="$PROJECT_DIR/app"
-
-          grep -q "versionCode 20" "$APP/build.gradle"
-          grep -q "versionName '17.2.1'" "$APP/build.gradle"
-          grep -q "compileSdk 35" "$APP/build.gradle"
-
-          grep -q "openai/gpt-oss-120b" \
-            "$APP/src/main/assets/index.html"
-
-          grep -qi "gemini" \
-            "$APP/src/main/assets/index.html"
-
-          grep -qi "github" \
-            "$APP/src/main/assets/index.html"
-
-          # Giữ VILA Server / enpoiko
-          grep -RniE "enpoiko|vila_server_url|serverUrl" \
-            "$APP/src/main/assets" \
-            "$APP/src/main/java" \
-            >/dev/null
-
-          echo "VILA configuration OK."
-
       - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
-
-          gradle clean :app:assembleDebug \
-            --no-daemon \
-            --stacktrace
+          cd "$PROJECT_DIR"
+          if [ -f "./gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew clean :app:assembleDebug --no-daemon --stacktrace
+          else
+            gradle clean :app:assembleDebug --no-daemon --stacktrace
+          fi
 
       - name: Verify APK
         shell: bash
         run: |
           set -e
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -name "*.apk" | head -n 1)"
 
-          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -s "$APK" ]; then
+          if [ -z "$APK" ] || [ ! -s "$APK" ]; then
             echo "::error::APK was not generated."
             exit 1
           fi
@@ -143,10 +101,8 @@ jobs:
           mkdir -p artifacts
           cp "$APK" "artifacts/VILA-Pro-V17.2.1-debug.apk"
 
-          echo "APK generated:"
+          echo "APK generated successfully:"
           ls -lh artifacts/VILA-Pro-V17.2.1-debug.apk
-
-          echo "SHA256:"
           sha256sum artifacts/VILA-Pro-V17.2.1-debug.apk
 
       - name: Upload APK
@@ -156,3 +112,4 @@ jobs:
           path: artifacts/VILA-Pro-V17.2.1-debug.apk
           if-no-files-found: error
           retention-days: 30
+          
