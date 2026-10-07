@@ -1,4 +1,4 @@
-name: VILA Pro V17.2.1 - Build APK
+Name: VILA Pro V17.2.1 - Build APK
 
 on:
   workflow_dispatch:
@@ -40,82 +40,67 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: "platform-tools"
 
-      - name: Install Android SDK 35
+      - name: Install Android SDK Components
         shell: bash
         run: |
           set -e
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER="sdkmanager"
-          fi
-          yes | $SDKMANAGER --licenses || true
-          $SDKMANAGER "platforms;android-${ANDROID_API}" "build-tools;${BUILD_TOOLS}"
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${BUILD_TOOLS}" "platform-tools"
 
-      - name: Locate Android project
+      - name: Locate Android Project Root
         shell: bash
         run: |
           set -e
-          # Tìm thư mục chứa settings.gradle
-          PROJECT_DIR="$(find . -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -not -path '*/build/*' | head -n 1 | xargs -r dirname)"
+          # Tìm file build ở mọi độ sâu thư mục (bỏ qua thư mục build ẩn)
+          FOUND_FILE=$(find . -not -path '*/.*' -not -path '*/build/*' \( -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts" \) | head -n 1)
 
-          # Nếu không tìm thấy, tìm thư mục chứa build.gradle
-          if [ -z "$PROJECT_DIR" ]; then
-            PROJECT_DIR="$(find . -maxdepth 4 \( -name "build.gradle" -o -name "build.gradle.kts" \) -not -path '*/build/*' | head -n 1 | xargs -r dirname)"
-          fi
-
-          # Mặc định lấy thư mục gốc nếu không phát hiện được file cấu hình
-          if [ -z "$PROJECT_DIR" ]; then
+          if [ -n "$FOUND_FILE" ]; then
+            PROJECT_DIR=$(dirname "$FOUND_FILE")
+          else
             PROJECT_DIR="."
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found Android project at: $PROJECT_DIR"
-
-      - name: Verify Android project
-        shell: bash
-        run: |
-          set -e
-          MANIFEST_FILE="$(find . -name "AndroidManifest.xml" -not -path '*/build/*' | head -n 1)"
-          if [ -z "$MANIFEST_FILE" ]; then
-            echo "::warning::Chưa tìm thấy AndroidManifest.xml, vẫn tiếp tục thử lệnh build..."
-          else
-            echo "Found AndroidManifest.xml at: $MANIFEST_FILE"
-          fi
+          echo "Phát hiện thư mục dự án Android tại: $PROJECT_DIR"
 
       - name: Build Debug APK
         shell: bash
         run: |
           set -e
           cd "$PROJECT_DIR"
-          if [ -f "./gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew clean :app:assembleDebug --no-daemon --stacktrace
-          else
-            gradle clean :app:assembleDebug --no-daemon --stacktrace
+
+          # Tự động tạo gradlew nếu dự án chưa có wrapper
+          if [ ! -f "./gradlew" ]; then
+            echo "Chưa có gradlew, tiến hành tạo wrapper..."
+            gradle wrapper
           fi
 
-      - name: Verify APK
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify and Collect APK
         shell: bash
         run: |
           set -e
-          APK="$(find "$PROJECT_DIR" -name "*.apk" -path "*/outputs/apk/*" | head -n 1)"
+          mkdir -p artifacts
 
-          if [ -z "$APK" ] || [ ! -s "$APK" ]; then
-            echo "::error::Khong tim thấy file APK được tạo ra sau khi build."
+          # Tìm file APK sinh ra trong thư mục outputs
+          APK_FILE=$(find "$PROJECT_DIR" -type f -name "*.apk" -path "*/outputs/apk/*" | head -n 1)
+
+          if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then
+            echo "::error::Không tìm thấy file APK sau khi build thành công."
             exit 1
           fi
 
-          mkdir -p artifacts
-          cp "$APK" "artifacts/VILA-Pro-V17.2.1-debug.apk"
+          cp "$APK_FILE" "artifacts/VILA-Pro-V17.2.1-debug.apk"
 
-          echo "APK generated successfully:"
+          echo "Đã đóng gói APK thành công:"
           ls -lh artifacts/VILA-Pro-V17.2.1-debug.apk
+          echo "Mã SHA256:"
           sha256sum artifacts/VILA-Pro-V17.2.1-debug.apk
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: VILA-Pro-V17.2.1-debug
