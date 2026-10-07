@@ -1,4 +1,4 @@
-name: VILA AI V16 - Build APK
+name: VILA Pro V17 - Build APK
 
 on:
   workflow_dispatch:
@@ -8,6 +8,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  GRADLE_VERSION: "8.11.1"
+  PROJECT_DIR: "VILA_AI_V9_Android"
 
 jobs:
   build:
@@ -22,128 +26,100 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.11.1'
+          gradle-version: "8.11.1"
 
-      - name: Find or extract Android project
+      - name: Extract VILA ZIP when needed
         shell: bash
         run: |
           set -e
 
-          echo "=== FIND ANDROID PROJECT ==="
-
-          SETTINGS_FILE=$(find . \
-            -type f \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            ! -path "./.git/*" \
-            ! -path "./.vila_extract/*" \
-            | head -n 1 || true)
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "Android project not found."
-            echo "Searching ZIP..."
-
-            ZIP_FILE=$(find . \
-              -type f \
-              -iname "*.zip" \
-              ! -path "./.git/*" \
-              ! -path "./.vila_extract/*" \
-              | head -n 1 || true)
-
-            if [ -z "$ZIP_FILE" ]; then
-              echo "ERROR: No Android project or ZIP found."
-              exit 1
-            fi
-
-            echo "ZIP found:"
-            echo "$ZIP_FILE"
-
-            rm -rf .vila_extract
-            mkdir -p .vila_extract
-
-            echo "Extracting ZIP..."
-            unzip -q -o "$ZIP_FILE" -d .vila_extract
-
-            SETTINGS_FILE=$(find .vila_extract \
-              -type f \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-              | head -n 1 || true)
-
-            if [ -z "$SETTINGS_FILE" ]; then
-              echo "ERROR: settings.gradle not found after extraction."
-              echo "Extracted files:"
-              find .vila_extract -maxdepth 5 -type f | head -200
-              exit 1
-            fi
+          if [ -d "$PROJECT_DIR" ]; then
+            echo "VILA project already exists."
+            exit 0
           fi
 
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-          PROJECT_DIR=$(realpath "$PROJECT_DIR")
+          ZIP_FILE="$(find . -maxdepth 2 -type f -iname '*.zip' \
+            ! -path './.git/*' \
+            | head -n 1 || true)"
 
-          echo "Android project:"
-          echo "$PROJECT_DIR"
-
-          if [ ! -d "$PROJECT_DIR/app" ]; then
-            echo "ERROR: app directory not found."
-            echo "Project contents:"
-            ls -la "$PROJECT_DIR"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: VILA_AI_V9_Android folder and ZIP were not found."
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "ZIP found: $ZIP_FILE"
 
-          echo "=== PROJECT FOUND ==="
-          ls -la "$PROJECT_DIR"
+          mkdir -p .vila_extract
+          unzip -q -o "$ZIP_FILE" -d .vila_extract
 
-      - name: Build app-debug.apk
-        working-directory: ${{ env.PROJECT_DIR }}
+          FOUND="$(find .vila_extract -type d \
+            -name 'VILA_AI_V9_Android' \
+            -print -quit || true)"
+
+          if [ -z "$FOUND" ]; then
+            echo "ERROR: VILA_AI_V9_Android was not found after extraction."
+            exit 1
+          fi
+
+          rm -rf "$PROJECT_DIR"
+          cp -a "$FOUND" "$PROJECT_DIR"
+
+      - name: Verify Android SDK
         shell: bash
         run: |
           set -e
 
-          echo "=== BUILD DEBUG APK ==="
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 
-          gradle assembleDebug \
+          if [ -z "$SDK" ]; then
+            echo "ERROR: Android SDK path is not available."
+            exit 1
+          fi
+
+          echo "Android SDK: $SDK"
+
+          test -d "$SDK/platforms/android-35"
+          test -d "$SDK/build-tools/35.0.0"
+
+          echo "Android SDK 35 is ready."
+
+      - name: Build app-debug.apk
+        working-directory: VILA_AI_V9_Android
+        shell: bash
+        run: |
+          set -e
+
+          gradle clean assembleDebug \
             --no-daemon \
             --stacktrace
 
-      - name: Find app-debug.apk
+      - name: Copy APK
         shell: bash
         run: |
           set -e
 
-          echo "=== SEARCH APK ==="
+          APK="VILA_AI_V9_Android/app/build/outputs/apk/debug/app-debug.apk"
 
-          APK=$(find "$PROJECT_DIR/app/build/outputs/apk" \
-            -type f \
-            -name "app-debug.apk" \
-            | head -n 1 || true)
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: app-debug.apk not found."
-
-            echo "Available APK files:"
-            find "$PROJECT_DIR/app/build/outputs" \
-              -type f \
-              -name "*.apk" \
-              2>/dev/null || true
-
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: app-debug.apk was not generated."
+            find VILA_AI_V9_Android/app/build/outputs \
+              -type f -name "*.apk" 2>/dev/null || true
             exit 1
           fi
 
-          cp "$APK" "$GITHUB_WORKSPACE/app-debug.apk"
+          cp "$APK" app-debug.apk
 
-          echo "APK READY:"
-          ls -lh "$GITHUB_WORKSPACE/app-debug.apk"
+          ls -lh app-debug.apk
 
       - name: Upload app-debug.apk
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-AI-V16-debug
+          name: VILA-Pro-V17-debug
           path: app-debug.apk
           if-no-files-found: error
           retention-days: 30
