@@ -1,23 +1,17 @@
-name: VILA AI - Build APK
+name: VILA AI V16 - Build APK
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-      - master
 
 permissions:
   contents: read
 
-env:
-  ANDROID_API: '35'
-  BUILD_TOOLS: '35.0.0'
-  GRADLE_VERSION: '8.11.1'
-
 jobs:
   build:
-    name: Build VILA AI APK
+    name: Build app-debug.apk
     runs-on: ubuntu-latest
 
     steps:
@@ -29,197 +23,110 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.11.1'
 
       - name: Find or extract Android project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          echo 'Searching for Android Gradle project...'
+          echo "=== FIND ANDROID PROJECT ==="
 
-          SETTINGS="$(find . -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
-            ! -path './.git/*' \
-            ! -path './.vila_extract/*' \
-            -print -quit || true)"
+          GRADLEW=$(find . \
+            -type f \
+            -name "gradlew" \
+            ! -path "./.git/*" \
+            | head -n 1 || true)
 
-          if [ -n "$SETTINGS" ]; then
-            PROJECT_DIR="$(dirname "$SETTINGS")"
-          else
-            echo 'No Android project found. Searching for ZIP...'
+          if [ -z "$GRADLEW" ]; then
+            echo "gradlew not found."
+            echo "Searching ZIP..."
 
-            ARCHIVE="$(find . -maxdepth 3 -type f -iname '*.zip' \
-              ! -path './.git/*' \
-              ! -path './.vila_extract/*' \
-              -print -quit || true)"
+            ZIP_FILE=$(find . \
+              -type f \
+              -iname "*.zip" \
+              ! -path "./.git/*" \
+              | head -n 1 || true)
 
-            if [ -z "$ARCHIVE" ]; then
-              echo 'ERROR: No settings.gradle and no ZIP project found.'
+            if [ -z "$ZIP_FILE" ]; then
+              echo "ERROR: No gradlew and no ZIP found."
               exit 1
             fi
+
+            echo "ZIP found:"
+            echo "$ZIP_FILE"
 
             rm -rf .vila_extract
             mkdir -p .vila_extract
 
-            echo "Extracting: $ARCHIVE"
-            unzip -q -o "$ARCHIVE" -d .vila_extract
+            echo "Extracting ZIP..."
+            unzip -q -o "$ZIP_FILE" -d .vila_extract
 
-            SETTINGS="$(find .vila_extract -type f \
-              \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
-              -print -quit || true)"
+            GRADLEW=$(find .vila_extract \
+              -type f \
+              -name "gradlew" \
+              | head -n 1 || true)
 
-            if [ -z "$SETTINGS" ]; then
-              echo 'ERROR: ZIP does not contain a valid Android Gradle project.'
+            if [ -z "$GRADLEW" ]; then
+              echo "ERROR: gradlew not found after extraction."
               exit 1
             fi
-
-            PROJECT_DIR="$(dirname "$SETTINGS")"
           fi
 
-          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
-
-          if [ ! -f "$PROJECT_DIR/settings.gradle" ] && \
-             [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
-            echo 'ERROR: settings.gradle not found.'
-            exit 1
-          fi
-
-          if [ ! -d "$PROJECT_DIR/app" ]; then
-            echo 'ERROR: app directory not found.'
-            exit 1
-          fi
+          PROJECT_DIR=$(dirname "$GRADLEW")
+          PROJECT_DIR=$(realpath "$PROJECT_DIR")
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo 'Project selected:'
+          echo "Project:"
           echo "$PROJECT_DIR"
 
-      - name: Configure Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
+          echo "=== PROJECT FILES ==="
+          ls -la "$PROJECT_DIR"
 
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-
-          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
-            for candidate in \
-              /usr/local/lib/android/sdk \
-              "$HOME/Android/Sdk" \
-              "$HOME/android-sdk"; do
-              if [ -d "$candidate" ]; then
-                SDK="$candidate"
-                break
-              fi
-            done
-          fi
-
-          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
-            echo 'ERROR: Android SDK directory not found.'
+          if [ ! -d "$PROJECT_DIR/app" ]; then
+            echo "ERROR: app directory not found."
             exit 1
           fi
 
-          SDKMANAGER="$(find "$SDK" \
-            -type f \
-            -name sdkmanager \
-            -perm -111 \
-            2>/dev/null \
-            | head -n 1 || true)"
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo 'ERROR: sdkmanager not found.'
-            exit 1
-          fi
-
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
-
-          echo "Android SDK: $SDK"
-          echo 'sdkmanager:'
-          "$SDKMANAGER" --version
-
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          set +e
-
-          mkdir -p "$ANDROID_HOME/licenses"
-
-          cat > "$ANDROID_HOME/licenses/android-sdk-license" <<'EOF'
-          8933bad161af4178b1185d1a37fbf41ea5269c55
-          84831b9409646a918e30573bab4c9c91346d8abd
-          d56f5187479451eabf01fb78af6dfcb131a6481e
-          24333f8a63b6825ea9c5514f83c2829b004d1fee
-          EOF
-
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-
-      - name: Install required Android SDK packages
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;${BUILD_TOOLS}"
-
-      - name: Validate VILA server
+      - name: Build app-debug.apk
+        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
 
-          if [ -f "$PROJECT_DIR/server/server.js" ]; then
-            node --check "$PROJECT_DIR/server/server.js"
-            echo 'server.js syntax OK.'
-          else
-            echo 'server/server.js not found; skipping server check.'
-          fi
+          chmod +x ./gradlew
 
-      - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gradle clean assembleDebug \
+          ./gradlew assembleDebug \
             --no-daemon \
             --stacktrace
 
-      - name: Prepare APK
+      - name: Find APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk" \
+          APK=$(find "$PROJECT_DIR/app/build/outputs/apk" \
             -type f \
-            -name 'app-debug.apk' \
-            -print -quit || true)"
+            -name "app-debug.apk" \
+            | head -n 1 || true)
 
           if [ -z "$APK" ]; then
-            echo 'ERROR: app-debug.apk was not generated.'
-            find "$PROJECT_DIR/app/build/outputs" \
-              -type f 2>/dev/null || true
+            echo "ERROR: app-debug.apk not found."
             exit 1
           fi
 
-          cp "$APK" "$GITHUB_WORKSPACE/VILA-AI-V16.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/app-debug.apk"
 
-          echo 'APK ready:'
-          ls -lh "$GITHUB_WORKSPACE/VILA-AI-V16.apk"
+          echo "=== APK READY ==="
+          ls -lh "$GITHUB_WORKSPACE/app-debug.apk"
 
-      - name: Upload APK
+      - name: Upload app-debug.apk
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-AI-V16-APK
-          path: VILA-AI-V16.apk
+          name: VILA-AI-V16-debug
+          path: app-debug.apk
           if-no-files-found: error
           retention-days: 30
