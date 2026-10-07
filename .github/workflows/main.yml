@@ -23,25 +23,17 @@ jobs:
       - name: Setup Android SDK & Accept Licenses
         run: |
           set -euo pipefail
-          echo "ANDROID_HOME=${ANDROID_HOME:-}"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
-          
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           if [ -z "$SDK" ]; then
             echo "::error::Không tìm thấy ANDROID_HOME"
             exit 1
           fi
-          
           SM=$(find "$SDK" -type f -name sdkmanager 2>/dev/null | head -n 1 || true)
           if [ -z "$SM" ]; then
             SM=$(which sdkmanager || true)
           fi
           echo "sdkmanager=$SM"
-          
-          # Tự động chấp nhận tất cả licenses (không bị treo)
           yes | "$SM" --licenses > /dev/null 2>&1 || true
-          
-          # Cài đặt các gói SDK cần thiết
           "$SM" --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" || \
           "$SM" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
@@ -62,42 +54,29 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
         run: |
           set -euo pipefail
-          echo "=== Kiểm tra cấu trúc thư mục ==="
-          pwd
+          echo "=== Kiểm tra môi trường ==="
+          which gradle
+          gradle --version
+          
+          echo "=== Cấu trúc thư mục ==="
           ls -la
-          
-          echo "=== Kiểm tra file settings.gradle ==="
-          cat settings.gradle || echo "Không tìm thấy settings.gradle"
-          
-          echo "=== Kiểm tra gradle wrapper ==="
-          ls -la gradle/wrapper/ || echo "Không có thư mục gradle/wrapper"
-          cat gradle/wrapper/gradle-wrapper.properties || true
+          cat settings.gradle || true
           
           echo "=== Bắt đầu build ==="
-          gradle assembleDebug --no-daemon --stacktrace || {
-            echo "=== BUILD THẤT BẠI - IN LOG CHI TIẾT ==="
-            gradle assembleDebug --no-daemon --stacktrace --info
-            exit 1
-          }
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Find and upload APK
         if: success()
         run: |
           set -euo pipefail
-          echo "=== Tìm file APK ==="
-          find app/build/outputs -type f -name "*.apk" -print || true
-          
           APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1 || true)
           if [ -z "${APK:-}" ]; then
-            echo "::error::Build thành công nhưng không tìm thấy file APK"
+            echo "::error::Build thành công nhưng không tìm thấy APK"
             find app/build -type f 2>/dev/null | head -n 100 || true
             exit 1
           fi
-          
           echo "Found: $APK"
-          ls -lh "$APK"
           cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
-          ls -lh "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
 
       - name: Upload artifact
         if: success()
