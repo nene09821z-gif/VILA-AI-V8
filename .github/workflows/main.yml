@@ -2,6 +2,7 @@ name: VILA AI - Build APK
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - main
@@ -10,149 +11,421 @@ on:
 permissions:
   contents: read
 
+env:
+  GRADLE_VERSION: "8.11.1"
+  ANDROID_API: "35"
+  BUILD_TOOLS: "35.0.0"
+  APK_NAME: "VILA-AI-V16-debug.apk"
+
 jobs:
   build:
     name: Build VILA AI APK
     runs-on: ubuntu-latest
 
     steps:
+
+      # =========================================================
+      # 1. DOWNLOAD SOURCE
+      # =========================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract project ZIP
-        shell: bash
-        run: |
-          set -e
 
-          echo "=== Repository ==="
-          ls -la
+      # =========================================================
+      # 2. JAVA 17
+      # =========================================================
 
-          # Nếu project đã được giải nén sẵn thì dùng trực tiếp.
-          if find . -maxdepth 3 -type f -name "settings.gradle*" | grep -q .; then
-            echo "Android project đã được giải nén."
-            exit 0
-          fi
-
-          # Tìm ZIP project.
-          ZIP_FILE=$(find . -maxdepth 3 -type f \
-            \( -iname "*.zip" \) \
-            ! -path "./.git/*" \
-            | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "Không tìm thấy file ZIP project."
-            exit 1
-          fi
-
-          echo "ZIP được tìm thấy: $ZIP_FILE"
-
-          mkdir -p .vila_extract
-
-          unzip -o "$ZIP_FILE" -d .vila_extract
-
-          # Tìm thư mục chứa Android project.
-          ANDROID_DIR=$(find .vila_extract -type f \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            -printf '%h\n' \
-            | head -n 1)
-
-          if [ -z "$ANDROID_DIR" ]; then
-            echo "Không tìm thấy settings.gradle/settings.gradle.kts sau khi giải nén."
-            echo "Cấu trúc sau khi giải nén:"
-            find .vila_extract -maxdepth 4 -type f | head -200
-            exit 1
-          fi
-
-          echo "Android project: $ANDROID_DIR"
-
-          # Copy project ra root.
-          cp -a "$ANDROID_DIR"/. .
-
-          echo "=== Android project ==="
-          ls -la
-
-      - name: Set up Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
+      # =========================================================
+      # 3. SETUP GRADLE
+      # =========================================================
 
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
 
-      - name: Make Gradle executable
+
+      # =========================================================
+      # 4. FIND / AUTO EXTRACT PROJECT
+      # =========================================================
+
+      - name: Find or extract Android project
         shell: bash
         run: |
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-          else
-            echo "Không có gradlew."
+          set -euo pipefail
 
-            if command -v gradle >/dev/null 2>&1; then
-              echo "Sử dụng Gradle hệ thống."
-            else
-              echo "Project không có gradlew và runner không có Gradle."
-              exit 1
-            fi
-          fi
+          echo "======================================"
+          echo "CHECKING REPOSITORY"
+          echo "======================================"
 
-      - name: Check project structure
-        shell: bash
-        run: |
-          echo "=== Project files ==="
+          pwd
           find . -maxdepth 3 -type f \
             ! -path "./.git/*" \
             | sort \
             | head -300
 
-      - name: Validate JavaScript server
-        shell: bash
-        run: |
-          if [ -f "server/index.js" ]; then
-            node --check server/index.js
-          elif [ -f "server.js" ]; then
-            node --check server.js
-          else
-            echo "Không có server JavaScript để kiểm tra."
+          # -----------------------------------------------------
+          # Trường hợp project đã được giải nén sẵn
+          # -----------------------------------------------------
+
+          PROJECT_DIR=""
+
+          EXISTING_SETTINGS="$(find . \
+            -type f \
+            \( \
+              -name "settings.gradle" \
+              -o \
+              -name "settings.gradle.kts" \
+            \) \
+            ! -path "./.git/*" \
+            ! -path "./.github/autobuild/*" \
+            | head -n 1 || true)"
+
+          if [ -n "$EXISTING_SETTINGS" ]; then
+            PROJECT_DIR="$(dirname "$EXISTING_SETTINGS")"
+            echo "Project đã tồn tại:"
+            echo "$PROJECT_DIR"
           fi
 
-      - name: Build Debug APK
+
+          # -----------------------------------------------------
+          # Nếu chưa có project -> tìm ZIP và tự giải nén
+          # -----------------------------------------------------
+
+          if [ -z "$PROJECT_DIR" ]; then
+
+            echo "Không tìm thấy Android project trực tiếp."
+            echo "Đang tìm file ZIP..."
+
+            ARCHIVE="$(
+              find . \
+                -type f \
+                -iname "*.zip" \
+                ! -path "./.git/*" \
+                | head -n 1 || true
+            )"
+
+            if [ -z "$ARCHIVE" ]; then
+              echo ""
+              echo "ERROR: Không tìm thấy project Android hoặc file ZIP."
+              exit 1
+            fi
+
+            echo "ZIP tìm thấy:"
+            echo "$ARCHIVE"
+
+            mkdir -p .github/autobuild
+
+            unzip -o "$ARCHIVE" \
+              -d .github/autobuild
+
+            echo ""
+            echo "======================================"
+            echo "SEARCHING EXTRACTED PROJECT"
+            echo "======================================"
+
+            EXTRACTED_SETTINGS="$(
+              find .github/autobuild \
+                -type f \
+                \( \
+                  -name "settings.gradle" \
+                  -o \
+                  -name "settings.gradle.kts" \
+                \) \
+                | head -n 1 || true
+            )"
+
+            if [ -z "$EXTRACTED_SETTINGS" ]; then
+              echo "ERROR: ZIP không chứa Android Gradle project."
+              echo ""
+              echo "Các file tìm thấy:"
+              find .github/autobuild \
+                -maxdepth 5 \
+                -type f \
+                | head -300
+              exit 1
+            fi
+
+            PROJECT_DIR="$(dirname "$EXTRACTED_SETTINGS")"
+
+            echo "Project sau khi giải nén:"
+            echo "$PROJECT_DIR"
+
+          fi
+
+
+          # -----------------------------------------------------
+          # Chuẩn hóa đường dẫn
+          # -----------------------------------------------------
+
+          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
+
+          echo ""
+          echo "======================================"
+          echo "FINAL PROJECT DIRECTORY"
+          echo "======================================"
+
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "Project contents:"
+          ls -la "$PROJECT_DIR"
+
+
+      # =========================================================
+      # 5. ANDROID SDK
+      # =========================================================
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+
+      # =========================================================
+      # 6. ACCEPT ANDROID LICENSES
+      # =========================================================
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set +e
+
+          echo "======================================"
+          echo "ACCEPTING ANDROID SDK LICENSES"
+          echo "======================================"
+
+          yes | sdkmanager --licenses >/dev/null 2>&1
+
+          mkdir -p "$ANDROID_HOME/licenses"
+
+          # Android SDK license
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" \
+            > "$ANDROID_HOME/licenses/android-sdk-license"
+
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" \
+            >> "$ANDROID_HOME/licenses/android-sdk-license"
+
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" \
+            >> "$ANDROID_HOME/licenses/android-sdk-license"
+
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
+            >> "$ANDROID_HOME/licenses/android-sdk-license"
+
+          yes | sdkmanager --licenses >/dev/null 2>&1
+
+          echo "Android SDK licenses configured."
+
+
+      # =========================================================
+      # 7. INSTALL SDK 35
+      # =========================================================
+
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -e
 
-          if [ -f "./gradlew" ]; then
-            ./gradlew clean assembleDebug --stacktrace
-          else
-            gradle clean assembleDebug --stacktrace
-          fi
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;${BUILD_TOOLS}"
 
-      - name: Find APK
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          echo ""
+          echo "Installed Android packages:"
+          sdkmanager --list_installed
+
+
+      # =========================================================
+      # 8. CHECK PROJECT
+      # =========================================================
+
+      - name: Check Gradle project
+        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
-          echo "=== APK files ==="
-          find . -type f \
-            \( -name "*.apk" -o -name "*.aab" \) \
-            ! -path "./.git/*" \
+          set -e
+
+          echo "======================================"
+          echo "GRADLE PROJECT"
+          echo "======================================"
+
+          ls -la
+
+          test -f settings.gradle \
+            || test -f settings.gradle.kts
+
+          test -f build.gradle \
+            || test -f build.gradle.kts
+
+          test -d app
+
+          echo "Gradle project OK."
+
+
+      # =========================================================
+      # 9. CHECK SERVER JAVASCRIPT
+      # =========================================================
+
+      - name: Validate VILA server
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "server/server.js" ]; then
+
+            echo "Checking server/server.js"
+
+            node --check server/server.js
+
+            echo "Server JavaScript syntax OK."
+
+          else
+
+            echo "No server/server.js found."
+            echo "Skipping server syntax check."
+
+          fi
+
+
+      # =========================================================
+      # 10. INSTALL SERVER DEPENDENCIES
+      # =========================================================
+
+      - name: Install server dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "server/package.json" ]; then
+
+            cd server
+
+            npm install \
+              --no-audit \
+              --no-fund
+
+          else
+
+            echo "No server/package.json."
+            echo "Skipping npm install."
+
+          fi
+
+
+      # =========================================================
+      # 11. SHOW GRADLE CONFIG
+      # =========================================================
+
+      - name: Check Gradle version
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          gradle --version
+
+
+      # =========================================================
+      # 12. BUILD APK
+      # =========================================================
+
+      - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "BUILDING VILA AI APK"
+          echo "======================================"
+
+          gradle \
+            clean \
+            assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all
+
+
+      # =========================================================
+      # 13. CHECK APK
+      # =========================================================
+
+      - name: Find generated APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "GENERATED APK"
+          echo "======================================"
+
+          find app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
             -print
 
-      - name: Upload APK
+          APK="$(find app/build/outputs/apk \
+            -type f \
+            -name "app-debug.apk" \
+            | head -n 1 || true)"
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK không được tạo."
+            exit 1
+          fi
+
+          echo "APK found:"
+          echo "$APK"
+
+
+      # =========================================================
+      # 14. RENAME APK
+      # =========================================================
+
+      - name: Rename APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          APK_DIR="app/build/outputs/apk/debug"
+
+          if [ -f "$APK_DIR/app-debug.apk" ]; then
+
+            cp \
+              "$APK_DIR/app-debug.apk" \
+              "$APK_DIR/${APK_NAME}"
+
+          else
+
+            echo "ERROR: app-debug.apk không tồn tại."
+            exit 1
+
+          fi
+
+          ls -lh "$APK_DIR"
+
+
+      # =========================================================
+      # 15. UPLOAD APK
+      # =========================================================
+
+      - name: Upload VILA AI APK
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-AI-debug-apk
-          path: |
-            **/build/outputs/apk/**/*.apk
-            **/build/outputs/apk/*.apk
+          name: VILA-AI-V16-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/${{ env.APK_NAME }}
           if-no-files-found: error
           retention-days: 30
