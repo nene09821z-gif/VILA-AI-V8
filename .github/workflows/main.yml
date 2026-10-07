@@ -20,10 +20,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Sửa bước này: Thêm cấu hình để tự động chấp nhận license
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '12.0' # Chỉ định phiên bản cmdline-tools ổn định
+          packages: 'platforms;android-35,build-tools;34.0.0,platform-tools'
+          accept-licenses: 'true'      # Tự động đồng ý license
 
-      - name: Install SDK packages
+      # Bước này giờ có thể giữ nguyên hoặc lược bớt vì setup-android đã cài packages rồi
+      - name: Install SDK packages (Dự phòng)
         run: |
           set -euo pipefail
           echo "ANDROID_HOME=${ANDROID_HOME:-}"
@@ -38,9 +44,9 @@ jobs:
             SM=$(which sdkmanager || true)
           fi
           echo "sdkmanager=$SM"
-          yes 2>/dev/null | "$SM" --licenses >/dev/null || true
-          "$SM" --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" || \
-          "$SM" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          # Đảm bảo chấp nhận license một lần nữa cho chắc chắn
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          "$SM" --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" || true
 
       - name: Write local.properties
         run: |
@@ -48,7 +54,6 @@ jobs:
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           echo "sdk.dir=$SDK" > local.properties
           cat local.properties
-          ls -la
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -60,16 +65,12 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
         run: |
           set -euo pipefail
-          echo "Building in: $(pwd)"
-          ls -la
           gradle help --no-daemon || true
           gradle assembleDebug --no-daemon --stacktrace
 
       - name: Find and upload APK
         run: |
           set -euo pipefail
-          echo "Searching APK..."
-          find app/build/outputs -type f -name "*.apk" -print || true
           APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1 || true)
           if [ -z "${APK:-}" ]; then
             echo "::error::Build xong nhưng không có APK"
@@ -79,7 +80,6 @@ jobs:
           echo "Found: $APK"
           ls -lh "$APK"
           cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
-          ls -lh "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
