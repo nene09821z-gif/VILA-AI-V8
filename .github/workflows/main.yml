@@ -2,24 +2,34 @@ name: VILA Pro V17 - Build APK
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
-
-concurrency:
-  group: vila-apk-\( {{ github.workflow }}- \){{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Find Android project root
+        id: root
+        run: |
+          set -euo pipefail
+          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          elif [ -f "VILA_AI_V9_Android/settings.gradle" ]; then
+            echo "dir=VILA_AI_V9_Android" >> "$GITHUB_OUTPUT"
+          else
+            FOUND=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 || true)
+            if [ -z "$FOUND" ]; then
+              echo "::error::Không tìm thấy settings.gradle"
+              ls -la; exit 1
+            fi
+            echo "dir=$(dirname "$FOUND")" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -30,64 +40,43 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses
+      - name: Install SDK packages
         run: |
           set -euo pipefail
-          yes 2>/dev/null | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          SDK="\( {ANDROID_SDK_ROOT:- \){ANDROID_HOME:-}}"
+          SM=$(find "$SDK" -type f -name sdkmanager 2>/dev/null | head -n 1 || which sdkmanager)
+          yes 2>/dev/null | "$SM" --licenses >/dev/null || true
+          "$SM" --install "platforms;android-35" "build-tools;34.0.0" "platform-tools" || \
+          "$SM" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
-      - name: Set up Gradle
+      - name: Write local.properties
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          SDK="\( {ANDROID_SDK_ROOT:- \){ANDROID_HOME:-}}"
+          echo "sdk.dir=$SDK" > local.properties
+
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.11.1"
-          cache-read-only: false
-
-      - name: Show project layout
-        run: |
-          echo "== repo root =="
-          ls -la
-          echo "== app =="
-          ls -la app || true
-          echo "== assets =="
-          ls -la app/src/main/assets || true
-          echo "== workflows =="
-          ls -la .github/workflows || true
+          gradle-version: "8.9"
 
       - name: Build debug APK
+        working-directory: ${{ steps.root.outputs.dir }}
         env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g"
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Find and upload APK
+        working-directory: ${{ steps.root.outputs.dir }}
         run: |
           set -euo pipefail
-          gradle assembleDebug --no-daemon --stacktrace --info | tee build.log
+          APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
+          cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
 
-      - name: Locate APK
-        id: apk
-        run: |
-          set -euo pipefail
-          APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1 || true)
-          if [ -z "${APK}" ]; then
-            echo "::error::Không tìm thấy file APK sau khi build"
-            find app/build -type f 2>/dev/null | head -n 80 || true
-            exit 1
-          fi
-          echo "path=${APK}" >> "$GITHUB_OUTPUT"
-          echo "name=\( (basename " \){APK}")" >> "$GITHUB_OUTPUT"
-          ls -lh "${APK}"
-          echo "APK_PATH=${APK}" >> "$GITHUB_ENV"
-
-      - name: Upload APK artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: VILA-Pro-V17-debug
-          path: ${{ steps.apk.outputs.path }}
+          path: VILA-Pro-V17-debug.apk
           if-no-files-found: error
           retention-days: 30
-
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: VILA-Pro-V17-build-log
-          path: build.log
-          if-no-files-found: ignore
-          retention-days: 7
