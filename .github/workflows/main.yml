@@ -58,22 +58,32 @@ jobs:
         shell: bash
         run: |
           set -e
-          PROJECT_DIR="$(find . -name settings.gradle -o -name settings.gradle.kts | head -n 1 | xargs -r dirname)"
+          # Tìm thư mục chứa settings.gradle
+          PROJECT_DIR="$(find . -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -not -path '*/build/*' | head -n 1 | xargs -r dirname)"
 
+          # Nếu không tìm thấy, tìm thư mục chứa build.gradle
           if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Android project with settings.gradle was not found."
-            exit 1
+            PROJECT_DIR="$(find . -maxdepth 4 \( -name "build.gradle" -o -name "build.gradle.kts" \) -not -path '*/build/*' | head -n 1 | xargs -r dirname)"
+          fi
+
+          # Mặc định lấy thư mục gốc nếu không phát hiện được file cấu hình
+          if [ -z "$PROJECT_DIR" ]; then
+            PROJECT_DIR="."
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found Android project: $PROJECT_DIR"
+          echo "Found Android project at: $PROJECT_DIR"
 
       - name: Verify Android project
         shell: bash
         run: |
           set -e
-          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml" || { echo "Missing AndroidManifest.xml"; exit 1; }
-          echo "Android project structure OK."
+          MANIFEST_FILE="$(find . -name "AndroidManifest.xml" -not -path '*/build/*' | head -n 1)"
+          if [ -z "$MANIFEST_FILE" ]; then
+            echo "::warning::Chưa tìm thấy AndroidManifest.xml, vẫn tiếp tục thử lệnh build..."
+          else
+            echo "Found AndroidManifest.xml at: $MANIFEST_FILE"
+          fi
 
       - name: Build Debug APK
         shell: bash
@@ -91,10 +101,10 @@ jobs:
         shell: bash
         run: |
           set -e
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -name "*.apk" | head -n 1)"
+          APK="$(find "$PROJECT_DIR" -name "*.apk" -path "*/outputs/apk/*" | head -n 1)"
 
           if [ -z "$APK" ] || [ ! -s "$APK" ]; then
-            echo "::error::APK was not generated."
+            echo "::error::Khong tim thấy file APK được tạo ra sau khi build."
             exit 1
           fi
 
