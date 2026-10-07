@@ -1,0 +1,39 @@
+name: Build VILA AI V9
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download VILA ZIP
+        run: |
+          mkdir -p vila
+          unzip -q VILA_AI_V9_1_SERVER_SELECTOR.zip -d vila
+          cp -r vila/VILA_AI_V9_Android/* .
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VILA-AI-V9-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
