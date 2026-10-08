@@ -21,10 +21,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # Đã xóa bỏ bước "android-actions/setup-android" tại đây vì ubuntu-latest đã có sẵn SDK
-
       - name: Cài đặt Android SDK packages
         run: |
+          # Thêm thư mục chứa sdkmanager vào PATH để hệ thống nhận diện được lệnh
+          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
+          
           # Chấp nhận tất cả giấy phép của SDK
           yes | sdkmanager --licenses || true
           
@@ -60,7 +61,7 @@ jobs:
 
       - name: Cấu hình Android SDK Path
         run: |
-          echo "sdk.dir=${ANDROID_SDK_ROOT}" > ${{ env.PROJECT_DIR }}/local.properties
+          echo "sdk.dir=${ANDROID_HOME}" > ${{ env.PROJECT_DIR }}/local.properties
 
       - name: Cấp quyền thực thi cho gradlew (nếu có)
         working-directory: ${{ env.PROJECT_DIR }}
