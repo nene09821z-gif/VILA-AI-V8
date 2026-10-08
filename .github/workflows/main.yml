@@ -59,19 +59,6 @@ jobs:
             echo "sdk.dir=$SDK" > local.properties
           fi
 
-      # BƯỚC MỚI: Kiểm tra cấu trúc trước khi build
-      - name: Verify Project Structure (Debug)
-        working-directory: ${{ steps.root.outputs.dir }}
-        run: |
-          echo "=== Cấu trúc thư mục app/ ==="
-          ls -la app/ || true
-          echo "=== Kiểm tra file google-services.json ==="
-          find . -name "google-services.json" || echo "⚠️ KHÔNG TÌM THẤY google-services.json"
-          echo "=== Nội dung file local.properties ==="
-          cat local.properties || true
-          echo "=== Nội dung file app/build.gradle ==="
-          cat app/build.gradle 2>/dev/null || cat app/build.gradle.kts 2>/dev/null || echo "⚠️ Không tìm thấy file build.gradle trong thư mục app/"
-
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -82,12 +69,28 @@ jobs:
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
         run: |
-          set -euo pipefail
+          set +e # Tắt chế độ dừng ngay khi lỗi để có thể đọc log
+          
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleDebug --no-daemon --stacktrace
+            ./gradlew assembleDebug --no-daemon --stacktrace > build_log.txt 2>&1
+            EXIT_CODE=$?
           else
-            gradle assembleDebug --no-daemon --stacktrace
+            gradle assembleDebug --no-daemon --stacktrace > build_log.txt 2>&1
+            EXIT_CODE=$?
+          fi
+          
+          # In toàn bộ log ra màn hình
+          cat build_log.txt
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "=========================================================="
+            echo "🚨 LỖI CHI TIẾT (HÃY COPY ĐOẠN DƯỚI ĐÂY GỬI LÊN CHAT):"
+            echo "=========================================================="
+            # Trích xuất chính xác đoạn báo lỗi
+            grep -A 30 "\* What went wrong:" build_log.txt || echo "Không tìm thấy mục 'What went wrong' trong log."
+            echo "=========================================================="
+            exit 1
           fi
 
       - name: Find and upload APK
