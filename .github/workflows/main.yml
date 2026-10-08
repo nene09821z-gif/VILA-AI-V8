@@ -14,6 +14,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # BƯỚC MỚI: Tự động giải nén nếu có file zip ở thư mục gốc
+      - name: Tự động giải nén (nếu có file zip)
+        run: |
+          if ls *.zip 1> /dev/null 2>&1; then
+            echo "Tìm thấy file zip, tiến hành giải nén..."
+            unzip -o *.zip
+            echo "Giải nén thành công."
+          else
+            echo "Không tìm thấy file zip, bỏ qua bước này."
+          fi
+          ls -la
+
       - name: Find Android project root
         id: root
         run: |
@@ -49,53 +61,25 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages
-        run: |
-          set -euo pipefail
-
-          echo "ANDROID_HOME=${ANDROID_HOME:-}"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
-
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-
-          if [ -z "$SDK" ]; then
-            echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME chưa được set"
-            exit 1
-          fi
-
-          # Prefer cmdline-tools sdkmanager
-          SM=$(find "$SDK" -type f -name sdkmanager 2>/dev/null | head -n 1 || true)
-
-          if [ -z "$SM" ]; then
-            SM=$(which sdkmanager || true)
-          fi
-
-          echo "sdkmanager=$SM"
-
-          yes 2>/dev/null | "$SM" --licenses >/dev/null || true
-
-          "$SM" --install \
-            "platforms;android-35" \
-            "build-tools;34.0.0" \
-            "platform-tools" || \
-          "$SM" --install \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "platform-tools"
+      # ĐÃ XÓA BƯỚC "Set up Android SDK" VÀ "Install SDK packages"
+      # Sẽ sử dụng Android SDK mặc định có sẵn trên máy chủ GitHub
 
       - name: Write local.properties
         working-directory: ${{ steps.root.outputs.dir }}
         run: |
           set -euo pipefail
 
+          # Lấy đường dẫn SDK mặc định của GitHub Runner
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 
-          echo "sdk.dir=$SDK" > local.properties
+          if [ -n "$SDK" ]; then
+            echo "sdk.dir=$SDK" > local.properties
+            echo "Đã tạo file local.properties với SDK: $SDK"
+          else
+            echo "::warning::Không tìm thấy biến môi trường ANDROID_SDK_ROOT hoặc ANDROID_HOME. Gradle sẽ tự động tìm kiếm."
+          fi
 
-          cat local.properties
+          cat local.properties || true
           ls -la
 
       - name: Set up Gradle 8.9
