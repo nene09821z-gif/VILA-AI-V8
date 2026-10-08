@@ -24,14 +24,19 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Cập nhật và cài đặt Android SDK packages
         run: |
+          # 1. Cập nhật danh sách gói của sdkmanager trước
+          echo "Đang cập nhật sdkmanager..."
+          sdkmanager --update
+          
+          # 2. Cài đặt các gói cần thiết
+          echo "Đang cài đặt platform-tools, android-35 và build-tools..."
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Tìm và giải nén file ZIP
         id: unzip
         run: |
-          # Tìm file zip trong repository
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
             echo "❌ Không tìm thấy file ZIP nào!"
@@ -39,15 +44,12 @@ jobs:
           fi
           echo "✅ Đã tìm thấy: $ZIP_FILE"
           
-          # Tạo thư mục và giải nén
           mkdir -p extracted_src
           unzip -q -o "$ZIP_FILE" -d extracted_src
           
-          # Liệt kê nội dung sau khi giải nén để kiểm tra
           echo "📂 Nội dung sau khi giải nén:"
           ls -la extracted_src
           
-          # Tự động dò tìm thư mục chứa file settings.gradle (dù bị lồng sâu)
           SETTINGS_FILE=$(find extracted_src -name "settings.gradle" -o -name "settings.gradle.kts" | head -n 1)
           if [ -z "$SETTINGS_FILE" ]; then
             echo "❌ Không tìm thấy file settings.gradle trong thư mục giải nén!"
