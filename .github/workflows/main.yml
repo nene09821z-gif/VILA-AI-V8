@@ -1,112 +1,63 @@
-name: VILA Pro V17 - Build APK
+name: VILA Pro Build
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, master]
-  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Tự động giải nén (nếu có file zip)
+      - name: Find and extract ZIP
         run: |
-          if ls *.zip 1> /dev/null 2>&1; then
-            echo "Tìm thấy file zip, tiến hành giải nén..."
-            unzip -o *.zip
+          set -e
+          ZIP=$(find . -maxdepth 2 -type f -iname "*.zip" | head -1)
+          if [ -n "$ZIP" ]; then
+            mkdir -p build_src
+            unzip -q "$ZIP" -d build_src
+            echo "Đã giải nén $ZIP vào build_src"
           else
-            echo "Không tìm thấy file zip."
+            echo "Không tìm thấy file ZIP, copy trực tiếp..."
+            mkdir -p build_src
+            cp -r ./* build_src/ 2>/dev/null || true
           fi
-          ls -la
+          ls -la build_src
 
-      - name: Find Android project root
-        id: root
-        run: |
-          set -euo pipefail
-          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
-            echo "dir=." >> "$GITHUB_OUTPUT"
-          elif [ -f "VILA_AI_V9_Android/settings.gradle" ]; then
-            echo "dir=VILA_AI_V9_Android" >> "$GITHUB_OUTPUT"
-          else
-            FOUND=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 || true)
-            if [ -z "$FOUND" ]; then
-              echo "::error::Không tìm thấy settings.gradle"
-              ls -la
-              exit 1
-            fi
-            DIR=$(dirname "$FOUND")
-            echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-          fi
-          echo "Project root: ${{ steps.root.outputs.dir }}"
-
-      - name: Set up JDK 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Write local.properties
-        working-directory: ${{ steps.root.outputs.dir }}
-        run: |
-          set -euo pipefail
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          if [ -n "$SDK" ]; then
-            echo "sdk.dir=$SDK" > local.properties
-          fi
+      # Bước này sẽ tự động cài đặt Android SDK cần thiết, không cần cài thủ công android-36
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Build debug APK
-        working-directory: ${{ steps.root.outputs.dir }}
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
+      - name: Build
+        working-directory: build_src
         run: |
-          set +e
-          
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --no-daemon --stacktrace > build_log.txt 2>&1
-            EXIT_CODE=$?
+          # Tìm thư mục chứa settings.gradle nếu nó bị lồng
+          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
+            echo "Project ở gốc build_src"
           else
-            gradle assembleDebug --no-daemon --stacktrace > build_log.txt 2>&1
-            EXIT_CODE=$?
+            echo "Đang tìm settings.gradle..."
+            DIR=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs dirname)
+            if [ -n "$DIR" ]; then
+              echo "Chuyển vào thư mục: $DIR"
+              cd "$DIR"
+            fi
           fi
           
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "=========================================================="
-            echo "🚨 LỖI BIÊN DỊCH JAVA (HÃY COPY ĐOẠN DƯỚI ĐÂY GỬI LÊN CHAT):"
-            echo "=========================================================="
-            # Lọc các dòng báo lỗi của trình biên dịch Java (thường chứa .java: hoặc error:)
-            grep -E "\.java:[0-9]+: error:|error: cannot find symbol|error: package|error: incompatible|Execution failed" build_log.txt | head -n 100
-            echo "=========================================================="
-            echo "Nếu không thấy lỗi cụ thể, hãy copy 50 dòng cuối của log:"
-            tail -n 50 build_log.txt
-            exit 1
-          fi
+          chmod +x gradlew 2>/dev/null || true
+          ./gradlew assembleDebug --stacktrace
 
-      - name: Find and upload APK
-        working-directory: ${{ steps.root.outputs.dir }}
-        run: |
-          set -euo pipefail
-          APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1 || true)
-          if [ -z "${APK:-}" ]; then
-            echo "::error::Build xong nhưng không có APK"
-            exit 1
-          fi
-          cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
-
-      - name: Upload artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-Pro-V17-debug
-          path: VILA-Pro-V17-debug.apk
+          name: VILA-Pro-APK
+          path: build_src/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 30
