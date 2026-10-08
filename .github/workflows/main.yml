@@ -69,7 +69,7 @@ jobs:
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
         run: |
-          set +e # Tắt chế độ dừng ngay khi lỗi để có thể đọc log
+          set +e
           
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
@@ -80,16 +80,15 @@ jobs:
             EXIT_CODE=$?
           fi
           
-          # In toàn bộ log ra màn hình
-          cat build_log.txt
-          
           if [ $EXIT_CODE -ne 0 ]; then
             echo "=========================================================="
-            echo "🚨 LỖI CHI TIẾT (HÃY COPY ĐOẠN DƯỚI ĐÂY GỬI LÊN CHAT):"
+            echo "🚨 LỖI BIÊN DỊCH JAVA (HÃY COPY ĐOẠN DƯỚI ĐÂY GỬI LÊN CHAT):"
             echo "=========================================================="
-            # Trích xuất chính xác đoạn báo lỗi
-            grep -A 30 "\* What went wrong:" build_log.txt || echo "Không tìm thấy mục 'What went wrong' trong log."
+            # Lọc các dòng báo lỗi của trình biên dịch Java (thường chứa .java: hoặc error:)
+            grep -E "\.java:[0-9]+: error:|error: cannot find symbol|error: package|error: incompatible|Execution failed" build_log.txt | head -n 100
             echo "=========================================================="
+            echo "Nếu không thấy lỗi cụ thể, hãy copy 50 dòng cuối của log:"
+            tail -n 50 build_log.txt
             exit 1
           fi
 
