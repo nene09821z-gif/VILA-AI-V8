@@ -21,8 +21,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # Đã xóa bỏ bước "android-actions/setup-android" tại đây vì ubuntu-latest đã có sẵn SDK
 
       - name: Cài đặt Android SDK packages
         run: |
@@ -84,3 +83,4 @@ jobs:
           name: VILA-Pro-V20-debug
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          
