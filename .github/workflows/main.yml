@@ -27,41 +27,26 @@ jobs:
       - name: Chấp nhận giấy phép SDK
         run: yes | sdkmanager --licenses || true
 
-      # 1. Cài đặt Gradle dự phòng
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # 2. Giải nén file ZIP
-      - name: Giải nén file ZIP dự án
-        run: |
-          unzip -q VILA_AI_V24_MULTI_API.zip -d project_src
-          echo "Đã giải nén xong."
-          ls -la project_src
-
-      # 3. Build với logic tự tạo gradlew nếu thiếu
       - name: Build APK
         run: |
-          cd project_src
-          
-          # Tìm thư mục chứa settings.gradle
+          # Tự động tìm thư mục chứa settings.gradle (nếu dự án nằm trong thư mục con)
           if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
             echo "Đang tìm settings.gradle..."
             DIR=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs dirname)
             if [ -n "$DIR" ]; then
-              echo "Chuyển vào thư mục: $DIR"
               cd "$DIR"
             fi
           fi
           
-          echo "Đang build tại thư mục: $(pwd)"
-          
-          # KIỂM TRA VÀ TỰ ĐỘNG TẠO GRADLEW NẾU THIẾU
+          # Tự động tạo gradlew nếu thiếu
           if [ ! -f "./gradlew" ]; then
-            echo "⚠️ Không tìm thấy gradlew. Đang tự động tạo..."
+            echo "Không tìm thấy gradlew, đang tự tạo..."
             gradle wrapper
           fi
           
-          # Cấp quyền và chạy build
           chmod +x ./gradlew
           ./gradlew assembleDebug --stacktrace
 
@@ -69,5 +54,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: VILA-APK
-          path: project_src/**/build/outputs/apk/debug/*.apk
+          path: '**/build/outputs/apk/debug/*.apk'
           if-no-files-found: error
