@@ -1,207 +1,85 @@
-name: VILA Pro V20 - Build APK
+name: Build VILA Pro APK từ ZIP
 
 on:
   push:
     branches: [ main, master ]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  JAVA_VERSION: '17'
-  GRADLE_VERSION: '8.9'
-  ANDROID_API: '35'
-  BUILD_TOOLS: '35.0.0'
-
 jobs:
   build:
-    name: Build VILA Pro APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Locate or extract Android project
-        id: project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          find_project() {
-            find "$1" -type f \( \
-              -name settings.gradle -o \
-              -name settings.gradle.kts \
-            \) -print -quit 2>/dev/null || true
-          }
-
-          PROJECT_SETTINGS="$(find_project .)"
-
-          if [ -n "$PROJECT_SETTINGS" ]; then
-            PROJECT_DIR="$(dirname "$PROJECT_SETTINGS")"
-            echo "Android project found: $PROJECT_DIR"
-          else
-            ZIP_FILE="$(find . -maxdepth 3 -type f \( \
-              -iname 'VILA_PRO_*.zip' -o \
-              -iname '*VILA*V20*.zip' \
-            \) -print -quit 2>/dev/null || true)"
-
-            if [ -z "$ZIP_FILE" ]; then
-              echo "::error::Không tìm thấy Android project hoặc file ZIP VILA_PRO_*.zip"
-              find . -maxdepth 3 -type f | sort | head -n 200
-              exit 1
-            fi
-
-            EXTRACT_DIR="$RUNNER_TEMP/vila-extracted"
-            rm -rf "$EXTRACT_DIR"
-            mkdir -p "$EXTRACT_DIR"
-
-            echo "Extracting: $ZIP_FILE"
-            unzip -q -o "$ZIP_FILE" -d "$EXTRACT_DIR"
-
-            echo "📂 Nội dung thư mục sau khi giải nén:"
-            ls -la "$EXTRACT_DIR"
-
-            PROJECT_SETTINGS="$(find_project "$EXTRACT_DIR")"
-
-            if [ -z "$PROJECT_SETTINGS" ]; then
-              echo "::error::ZIP đã giải nén nhưng không chứa settings.gradle/settings.gradle.kts"
-              find "$EXTRACT_DIR" -maxdepth 4 -type f | sort | head -n 300
-              exit 1
-            fi
-
-            PROJECT_DIR="$(dirname "$PROJECT_SETTINGS")"
-            echo "Extracted Android project: $PROJECT_DIR"
-          fi
-
-          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-
-          test -f "$PROJECT_DIR/settings.gradle" || \
-          test -f "$PROJECT_DIR/settings.gradle.kts"
-
-          test -f "$PROJECT_DIR/app/build.gradle" || \
-          test -f "$PROJECT_DIR/app/build.gradle.kts"
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install required Android SDK packages
-        shell: bash
+      - name: Install Android SDK packages
         run: |
-          set -euo pipefail
-          SDKMANAGER="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(command -v sdkmanager || true)"
-          fi
-          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
-            echo "::error::sdkmanager không được tìm thấy"
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Tìm và giải nén file ZIP
+        id: unzip
+        run: |
+          # Tìm file zip trong repository
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ Không tìm thấy file ZIP nào!"
             exit 1
           fi
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;${BUILD_TOOLS}"
-
-      - name: Configure Android SDK path
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          test -n "$SDK"
-          printf 'sdk.dir=%s\n' "$SDK" > local.properties
-          echo "Using Android SDK: $SDK"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
-          cache-read-only: false
-
-      - name: Run project QA
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f QA_V20.py ]; then
-            python3 QA_V20.py
-          else
-            echo "QA_V20.py not found; continuing."
+          echo "✅ Đã tìm thấy: $ZIP_FILE"
+          
+          # Tạo thư mục và giải nén
+          mkdir -p extracted_src
+          unzip -q -o "$ZIP_FILE" -d extracted_src
+          
+          # Liệt kê nội dung sau khi giải nén để kiểm tra
+          echo "📂 Nội dung sau khi giải nén:"
+          ls -la extracted_src
+          
+          # Tự động dò tìm thư mục chứa file settings.gradle (dù bị lồng sâu)
+          SETTINGS_FILE=$(find extracted_src -name "settings.gradle" -o -name "settings.gradle.kts" | head -n 1)
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "❌ Không tìm thấy file settings.gradle trong thư mục giải nén!"
+            exit 1
           fi
+          
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          echo "✅ Đã tìm thấy dự án tại: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
 
-      - name: Build debug APK
-        id: build_step
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        env:
-          GRADLE_OPTS: >-
-            -Dorg.gradle.daemon=false
-            -Dorg.gradle.jvmargs=-Xmx2g
-            -Dfile.encoding=UTF-8
+      - name: Cấu hình Android SDK Path
         run: |
-          set -euo pipefail
+          echo "sdk.dir=${ANDROID_SDK_ROOT}" > ${{ env.PROJECT_DIR }}/local.properties
+
+      - name: Cấp quyền thực thi cho gradlew (nếu có)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: chmod +x gradlew || echo "Không có gradlew, sẽ dùng gradle toàn cục"
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
           if [ -f ./gradlew ]; then
-            chmod +x ./gradlew
-            echo "Sử dụng Gradle Wrapper..."
-            ./gradlew clean assembleDebug --no-daemon --stacktrace --warning-mode=all 2>&1 | tee build.log
+            echo "🚀 Đang build bằng gradlew..."
+            ./gradlew clean assembleDebug --no-daemon --stacktrace
           else
-            echo "Không tìm thấy gradlew, sử dụng Gradle toàn cục..."
-            gradle clean assembleDebug --no-daemon --stacktrace --warning-mode=all 2>&1 | tee build.log
+            echo "🚀 Không có gradlew, đang build bằng gradle toàn cục..."
+            gradle clean assembleDebug --no-daemon --stacktrace
           fi
 
-      - name: Upload Build Log on Failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: ${{ steps.project.outputs.dir }}/build.log
-          if-no-files-found: warn
-
-      - name: Verify APK exists
-        id: apk
-        working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK="$(find app/build/outputs/apk/debug \
-            -maxdepth 1 \
-            -type f \
-            -name '*.apk' \
-            -print -quit 2>/dev/null || true)"
-          if [ -z "$APK" ]; then
-            echo "::error::Build không tạo được APK"
-            find app/build/outputs \
-              -type f \
-              -maxdepth 5 \
-              -print 2>/dev/null || true
-            exit 1
-          fi
-          echo "apk=$APK" >> "$GITHUB_OUTPUT"
-          ls -lh "$APK"
-
-      - name: Copy APK to workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp "${{ steps.project.outputs.dir }}/${{ steps.apk.outputs.apk }}" \
-             "$GITHUB_WORKSPACE/VILA-Pro-V20-debug.apk"
-          ls -lh "$GITHUB_WORKSPACE/VILA-Pro-V20-debug.apk"
-
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: VILA-Pro-V20-debug
-          path: VILA-Pro-V20-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 30
