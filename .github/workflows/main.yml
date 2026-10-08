@@ -27,19 +27,23 @@ jobs:
       - name: Chấp nhận giấy phép SDK
         run: yes | sdkmanager --licenses || true
 
-      # 1. BƯỚC QUAN TRỌNG: Giải nén file ZIP
+      # 1. Cài đặt Gradle dự phòng
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # 2. Giải nén file ZIP
       - name: Giải nén file ZIP dự án
         run: |
           unzip -q VILA_AI_V24_MULTI_API.zip -d project_src
           echo "Đã giải nén xong."
           ls -la project_src
 
-      # 2. Tìm thư mục chứa settings.gradle và build
+      # 3. Build với logic tự tạo gradlew nếu thiếu
       - name: Build APK
         run: |
           cd project_src
           
-          # Nếu thư mục gốc không có settings.gradle, tìm thư mục con
+          # Tìm thư mục chứa settings.gradle
           if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
             echo "Đang tìm settings.gradle..."
             DIR=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs dirname)
@@ -50,7 +54,12 @@ jobs:
           fi
           
           echo "Đang build tại thư mục: $(pwd)"
-          ls -la
+          
+          # KIỂM TRA VÀ TỰ ĐỘNG TẠO GRADLEW NẾU THIẾU
+          if [ ! -f "./gradlew" ]; then
+            echo "⚠️ Không tìm thấy gradlew. Đang tự động tạo..."
+            gradle wrapper
+          fi
           
           # Cấp quyền và chạy build
           chmod +x ./gradlew
