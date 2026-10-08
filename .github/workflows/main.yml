@@ -33,9 +33,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # CHỈ CẦN BƯỚC NÀY, KHÔNG CẦN CÀI SDK THỦ CÔNG NỮA
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # ĐÃ XÓA BƯỚC SETUP ANDROID SDK BỊ LỖI Ở ĐÂY
 
       - name: Build
         working-directory: build_src
