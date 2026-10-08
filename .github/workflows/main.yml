@@ -62,6 +62,9 @@ jobs:
             echo "Extracting: $ZIP_FILE"
             unzip -q -o "$ZIP_FILE" -d "$EXTRACT_DIR"
 
+            echo "📂 Nội dung thư mục sau khi giải nén:"
+            ls -la "$EXTRACT_DIR"
+
             PROJECT_SETTINGS="$(find_project "$EXTRACT_DIR")"
 
             if [ -z "$PROJECT_SETTINGS" ]; then
@@ -96,20 +99,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           SDKMANAGER="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}/cmdline-tools/latest/bin/sdkmanager"
-
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$(command -v sdkmanager || true)"
           fi
-
           if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
             echo "::error::sdkmanager không được tìm thấy"
             exit 1
           fi
-
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
@@ -120,13 +118,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-
           test -n "$SDK"
-
           printf 'sdk.dir=%s\n' "$SDK" > local.properties
-
           echo "Using Android SDK: $SDK"
 
       - name: Set up Gradle
@@ -140,7 +134,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if [ -f QA_V20.py ]; then
             python3 QA_V20.py
           else
@@ -148,6 +141,7 @@ jobs:
           fi
 
       - name: Build debug APK
+        id: build_step
         working-directory: ${{ steps.project.outputs.dir }}
         shell: bash
         env:
@@ -157,13 +151,22 @@ jobs:
             -Dfile.encoding=UTF-8
         run: |
           set -euo pipefail
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            echo "Sử dụng Gradle Wrapper..."
+            ./gradlew clean assembleDebug --no-daemon --stacktrace --warning-mode=all 2>&1 | tee build.log
+          else
+            echo "Không tìm thấy gradlew, sử dụng Gradle toàn cục..."
+            gradle clean assembleDebug --no-daemon --stacktrace --warning-mode=all 2>&1 | tee build.log
+          fi
 
-          gradle --version
-
-          gradle clean assembleDebug \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode=all
+      - name: Upload Build Log on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ steps.project.outputs.dir }}/build.log
+          if-no-files-found: warn
 
       - name: Verify APK exists
         id: apk
@@ -171,13 +174,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           APK="$(find app/build/outputs/apk/debug \
             -maxdepth 1 \
             -type f \
             -name '*.apk' \
             -print -quit 2>/dev/null || true)"
-
           if [ -z "$APK" ]; then
             echo "::error::Build không tạo được APK"
             find app/build/outputs \
@@ -186,19 +187,15 @@ jobs:
               -print 2>/dev/null || true
             exit 1
           fi
-
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
-
           ls -lh "$APK"
 
       - name: Copy APK to workspace
         shell: bash
         run: |
           set -euo pipefail
-
           cp "${{ steps.project.outputs.dir }}/${{ steps.apk.outputs.apk }}" \
              "$GITHUB_WORKSPACE/VILA-Pro-V20-debug.apk"
-
           ls -lh "$GITHUB_WORKSPACE/VILA-Pro-V20-debug.apk"
 
       - name: Upload APK artifact
