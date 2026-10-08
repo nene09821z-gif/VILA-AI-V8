@@ -33,7 +33,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Bước này sẽ tự động cài đặt Android SDK cần thiết, không cần cài thủ công android-36
+      # CHỈ CẦN BƯỚC NÀY, KHÔNG CẦN CÀI SDK THỦ CÔNG NỮA
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
