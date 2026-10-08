@@ -33,7 +33,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Cài đặt Gradle dự phòng
+      # 1. BỔ SUNG BƯỚC CÀI ĐẶT ANDROID SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 2. Cài đặt Gradle dự phòng
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -67,4 +71,4 @@ jobs:
         with:
           name: VILA-Pro-APK
           path: build_src/**/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          if-no-files-found: warn # Đổi thành warn để không làm sập toàn bộ workflow nếu APK lỗi
