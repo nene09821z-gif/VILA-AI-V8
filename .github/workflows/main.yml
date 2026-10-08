@@ -24,13 +24,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Cập nhật và cài đặt Android SDK packages
+      - name: Cài đặt Android SDK packages
         run: |
-          # 1. Cập nhật danh sách gói của sdkmanager trước
-          echo "Đang cập nhật sdkmanager..."
-          sdkmanager --update
+          # Chấp nhận tất cả giấy phép của SDK
+          yes | sdkmanager --licenses || true
           
-          # 2. Cài đặt các gói cần thiết
+          # Cài đặt trực tiếp các gói cần thiết, KHÔNG dùng --update
           echo "Đang cài đặt platform-tools, android-35 và build-tools..."
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
