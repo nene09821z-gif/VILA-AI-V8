@@ -14,7 +14,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # BƯỚC MỚI: Tự động giải nén nếu có file zip ở thư mục gốc
       - name: Tự động giải nén (nếu có file zip)
         run: |
           if ls *.zip 1> /dev/null 2>&1; then
@@ -30,30 +29,34 @@ jobs:
         id: root
         run: |
           set -euo pipefail
-
           if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
             echo "dir=." >> "$GITHUB_OUTPUT"
-            echo "Found project at repo root"
-
           elif [ -f "VILA_AI_V9_Android/settings.gradle" ]; then
             echo "dir=VILA_AI_V9_Android" >> "$GITHUB_OUTPUT"
-            echo "Found project at VILA_AI_V9_Android/"
-
           else
-            FOUND=$(find . -maxdepth 3 \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-              | head -n 1 || true)
-
+            FOUND=$(find . -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 || true)
             if [ -z "$FOUND" ]; then
               echo "::error::Không tìm thấy settings.gradle — hãy đẩy đúng thư mục project Android lên root repo"
               ls -la
               exit 1
             fi
-
             DIR=$(dirname "$FOUND")
             echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-            echo "Found project at $DIR"
           fi
+          echo "Project root: ${{ steps.root.outputs.dir }}"
+
+      - name: Debug Environment
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          echo "=== Java Version ==="
+          java -version
+          echo "=== Android SDK Path ==="
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "=== Cấu trúc thư mục ==="
+          ls -la
+          echo "=== Nội dung file build.gradle (nếu có) ==="
+          cat build.gradle 2>/dev/null || cat build.gradle.kts 2>/dev/null || true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -61,26 +64,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # ĐÃ XÓA BƯỚC "Set up Android SDK" VÀ "Install SDK packages"
-      # Sẽ sử dụng Android SDK mặc định có sẵn trên máy chủ GitHub
-
       - name: Write local.properties
         working-directory: ${{ steps.root.outputs.dir }}
         run: |
           set -euo pipefail
-
-          # Lấy đường dẫn SDK mặc định của GitHub Runner
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-
           if [ -n "$SDK" ]; then
             echo "sdk.dir=$SDK" > local.properties
             echo "Đã tạo file local.properties với SDK: $SDK"
           else
-            echo "::warning::Không tìm thấy biến môi trường ANDROID_SDK_ROOT hoặc ANDROID_HOME. Gradle sẽ tự động tìm kiếm."
+            echo "::warning::Không tìm thấy biến môi trường SDK."
           fi
-
-          cat local.properties || true
-          ls -la
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -93,53 +87,30 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
         run: |
           set -euo pipefail
-
           echo "Building in: $(pwd)"
-          ls -la
-
-          # Generate wrapper if missing, then build with gradle directly
-          gradle help --no-daemon || true
-
-          gradle assembleDebug \
-            --no-daemon \
-            --stacktrace
+          
+          # Ưu tiên dùng gradlew của project nếu có
+          if [ -f "./gradlew" ]; then
+            echo "Sử dụng Gradle Wrapper của project..."
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace --info
+          else
+            echo "Không tìm thấy gradlew, sử dụng Gradle hệ thống..."
+            gradle help --no-daemon || true
+            gradle assembleDebug --no-daemon --stacktrace --info
+          fi
 
       - name: Find and upload APK
         working-directory: ${{ steps.root.outputs.dir }}
         run: |
           set -euo pipefail
-
-          echo "Searching APK..."
-
-          find app/build/outputs \
-            -type f \
-            -name "*.apk" \
-            -print || true
-
-          APK=$(find app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            | head -n 1 || true)
-
+          APK=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1 || true)
           if [ -z "${APK:-}" ]; then
             echo "::error::Build xong nhưng không có APK"
-
-            find app/build \
-              -type f \
-              2>/dev/null \
-              | head -n 100 || true
-
+            find app/build -type f 2>/dev/null | head -n 100 || true
             exit 1
           fi
-
-          echo "Found: $APK"
-          ls -lh "$APK"
-
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
-
-          ls -lh \
-            "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/VILA-Pro-V17-debug.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
