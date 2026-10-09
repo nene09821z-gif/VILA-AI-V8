@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP =====
+      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP (ĐÃ SỬA LỖI) =====
       - name: Extract source ZIP
         shell: bash
         run: |
@@ -29,7 +29,8 @@ jobs:
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
-            unzip -q "$ZIP_FILE"
+            # Thêm -o để tự động ghi đè nếu file đã tồn tại
+            unzip -o -q "$ZIP_FILE"
             echo "Giải nén thành công!"
             # Xóa file zip sau khi giải nén để tránh nhầm lẫn
             rm -f "$ZIP_FILE"
@@ -38,7 +39,7 @@ jobs:
           else
             echo "Không tìm thấy file ZIP ở thư mục gốc. Bỏ qua bước này."
           fi
-      # ====================================
+      # ==================================================
 
       - name: Setup Java
         uses: actions/setup-java@v4
