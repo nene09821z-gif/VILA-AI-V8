@@ -1,4 +1,4 @@
-name: Build VILA AI Android
+name: Build VILA AI V32
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           # Đã cập nhật tên file ZIP mới tại đây
-          ZIP_FILE="VILA_AI_GITHUB_REAL_BUILD_V31_REASONING_FILES_UI.zip"
+          ZIP_FILE="VILA_AI_GITHUB_REAL_BUILD_V32_ANDROID_IMAGE_THINKING.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
