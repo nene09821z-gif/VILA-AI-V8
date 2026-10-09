@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           # Đã cập nhật tên file ZIP mới tại đây
-          ZIP_FILE="VILA_AI_STUDIO_V37_ICON_COLOR_FIX.zip"
+          ZIP_FILE="VILA_AI_STUDIO_V37_API_KEY_SAVE_FIX.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
