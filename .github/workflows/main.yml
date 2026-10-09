@@ -1,10 +1,11 @@
-
-name: VILA AI - Build APK and ZIP
+name: Build VILA AI Android
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
@@ -12,144 +13,140 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Set up Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@v3
         with:
           packages: ''
-          accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+          yes | sdkmanager --licenses || true
 
-      - name: Locate Android project
-        id: project
+      - name: Find Android project
+        id: locate
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Repository files ==="
-          ls -la
+          echo "=== Workspace ==="
+          pwd
+          ls -lah
 
-          FILE=$(find . -maxdepth 8 -type f \
-            \( -name settings.gradle -o -name settings.gradle.kts \) \
-            -not -path '*/.git/*' \
-            -not -path '*/.gradle/*' \
-            | head -n 1 || true)
+          echo "=== Gradle files ==="
+          find . -type f \( \
+            -name settings.gradle \
+            -o -name settings.gradle.kts \
+          \) -not -path '*/.gradle/*' -print
 
-          if [ -n "$FILE" ]; then
-            ROOT="$(dirname "$FILE")"
+          ROOT_FILE="$(find . -type f \( \
+            -name settings.gradle \
+            -o -name settings.gradle.kts \
+          \) -not -path '*/.gradle/*' -print -quit)"
+
+          if [ -n "$ROOT_FILE" ]; then
+            PROJECT_DIR="$(dirname "$ROOT_FILE")"
           else
-            FILE=$(find . -maxdepth 8 -type f \
-              \( -path '*/app/build.gradle' \
-                 -o -path '*/app/build.gradle.kts' \) \
-              -not -path '*/.git/*' \
+            # Fallback: locate a module containing AndroidManifest.xml
+            MANIFEST="$(find . -type f \
+              -path '*/src/main/AndroidManifest.xml' \
               -not -path '*/.gradle/*' \
-              | head -n 1 || true)
+              -print -quit)"
 
-            if [ -n "$FILE" ]; then
-              ROOT="$(dirname "$(dirname "$FILE")")"
+            if [ -n "$MANIFEST" ]; then
+              MODULE_DIR="$(dirname "$(dirname "$(dirname "$MANIFEST")")")"
+              PROJECT_DIR="$(dirname "$MODULE_DIR")"
+
+              if [ ! -f "$PROJECT_DIR/build.gradle" ] && \
+                 [ ! -f "$PROJECT_DIR/build.gradle.kts" ]; then
+                PROJECT_DIR="$MODULE_DIR"
+              fi
+            elif [ -f "./build.gradle" ] || [ -f "./build.gradle.kts" ]; then
+              PROJECT_DIR="."
             else
               echo "::error::Không tìm thấy dự án Android."
-              find . -maxdepth 8 -type f \
-                \( -name settings.gradle \
-                   -o -name settings.gradle.kts \
-                   -o -name build.gradle \
-                   -o -name build.gradle.kts \)
+              echo "Các file hiện có:"
+              find . -maxdepth 5 -type f | head -200
               exit 1
             fi
           fi
 
-          echo "dir=$ROOT" >> "$GITHUB_OUTPUT"
-          echo "Android project root: $ROOT"
+          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Project: $PROJECT_DIR"
+          ls -lah "$PROJECT_DIR"
 
-      - name: Set up Gradle
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: '8.9'
 
-      - name: Configure Android SDK
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-
-      - name: Build debug APK
-        working-directory: ${{ steps.project.outputs.dir }}
+      - name: Build Debug APK
+        working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8"
         run: |
           set -euo pipefail
-          gradle assembleDebug --no-daemon --stacktrace
 
-          APK=$(find app/build/outputs/apk/debug \
-            -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew --no-daemon assembleDebug
+          else
+            gradle --no-daemon assembleDebug
+          fi
 
-          if [ -z "$APK" ]; then
+      - name: Collect APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          PROJECT_DIR="${{ steps.locate.outputs.project_dir }}"
+
+          find "$PROJECT_DIR" -type f -name '*.apk' \
+            -not -path '*/build/intermediates/*' \
+            -exec cp {} "$GITHUB_WORKSPACE/output/" \;
+
+          if ! find "$GITHUB_WORKSPACE/output" -type f -name '*.apk' | grep -q .; then
             echo "::error::Build xong nhưng không tìm thấy APK."
             exit 1
           fi
 
-          mkdir -p "$GITHUB_WORKSPACE/output"
-          cp "$APK" "$GITHUB_WORKSPACE/output/VILA-AI-debug.apk"
+          ls -lh "$GITHUB_WORKSPACE/output"
 
       - name: Package source ZIP
         shell: bash
-        env:
-          PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
           set -euo pipefail
-          mkdir -p output
-          zip -qr output/VILA-AI-source.zip "$PROJECT_DIR" \
-            -x '*/.git/*' \
-               '*/.gradle/*' \
-               '*/build/*' \
-               '*/local.properties' \
-               '*/.idea/*' \
-               '*.apk' '*.aab'
+          PROJECT_DIR="${{ steps.locate.outputs.project_dir }}"
 
-      - name: Create complete ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p output/VILA-AI-package
-          cp output/VILA-AI-debug.apk output/VILA-AI-package/
-          cp output/VILA-AI-source.zip output/VILA-AI-package/
+          cd "$PROJECT_DIR"
+          zip -qr "$GITHUB_WORKSPACE/output/VILA_AI_SOURCE.zip" . \
+            -x '*/.git/*' '*/.gradle/*' '*/build/*'
 
-          cat > output/VILA-AI-package/README.txt <<'EOF'
-          VILA AI BUILD PACKAGE
-          VILA-AI-debug.apk: Android debug APK.
-          VILA-AI-source.zip: Android project source code.
-          EOF
-
-          cd output
-          zip -qr VILA-AI-complete.zip VILA-AI-package
-
-      - name: Upload APK and ZIP artifacts
+      - name: Upload APK and ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-AI-Build-Files
-          path: |
-            output/VILA-AI-debug.apk
-            output/VILA-AI-source.zip
-            output/VILA-AI-complete.zip
+          name: VILA-AI-Android-Build
+          path: output/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
           
