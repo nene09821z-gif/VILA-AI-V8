@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          ZIP_FILE="VILA_AI_BUILD_READY_ROOT_WORKFLOW.zip"
+          ZIP_FILE="VILA_AI_GITHUB_REAL_BUILD_V28.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
