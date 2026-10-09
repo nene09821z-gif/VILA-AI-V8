@@ -20,11 +20,12 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP (ĐÃ SỬA LỖI) =====
+      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP (ĐÃ CẬP NHẬT TÊN FILE MỚI) =====
       - name: Extract source ZIP
         shell: bash
-        run: 
+        run: |
           set -e
+          # Đã cập nhật tên file ZIP mới tại đây
           ZIP_FILE="VILA_AI_GITHUB_REAL_BUILD_V28_IMAGE_FIX.zip"
           
           if [ -f "$ZIP_FILE" ]; then
@@ -119,7 +120,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          # ĐÃ SỬA: Nâng cấp từ 8.9 lên 9.3.1 để giải quyết lỗi "Minimum supported Gradle version is 9.3.1"
+          # ĐÃ SỬA: Nâng cấp lên 9.3.1 để giải quyết lỗi "Minimum supported Gradle version is 9.3.1"
           gradle-version: '9.3.1'
 
       - name: Build Debug APK
