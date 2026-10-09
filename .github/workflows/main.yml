@@ -4,9 +4,7 @@ name: VILA AI - Build APK and ZIP
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -32,7 +30,7 @@ jobs:
           packages: ''
           accept-android-sdk-licenses: true
 
-      - name: Install Android platform and build tools
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
@@ -40,7 +38,6 @@ jobs:
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
-          yes | sdkmanager --licenses >/dev/null || true
 
       - name: Locate Android project
         id: project
@@ -48,25 +45,40 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
-            ROOT="."
-          elif [ -f VILA_AI_V9_Android/settings.gradle ] || [ -f VILA_AI_V9_Android/settings.gradle.kts ]; then
-            ROOT="VILA_AI_V9_Android"
-          else
-            FILE=$(find . -maxdepth 5 \
-              \( -name settings.gradle -o -name settings.gradle.kts \) \
-              -not -path '*/.gradle/*' | head -n 1 || true)
+          echo "=== Repository files ==="
+          ls -la
 
-            if [ -z "$FILE" ]; then
-              echo "::error::Không tìm thấy settings.gradle của dự án Android."
+          FILE=$(find . -maxdepth 8 -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -not -path '*/.git/*' \
+            -not -path '*/.gradle/*' \
+            | head -n 1 || true)
+
+          if [ -n "$FILE" ]; then
+            ROOT="$(dirname "$FILE")"
+          else
+            FILE=$(find . -maxdepth 8 -type f \
+              \( -path '*/app/build.gradle' \
+                 -o -path '*/app/build.gradle.kts' \) \
+              -not -path '*/.git/*' \
+              -not -path '*/.gradle/*' \
+              | head -n 1 || true)
+
+            if [ -n "$FILE" ]; then
+              ROOT="$(dirname "$(dirname "$FILE")")"
+            else
+              echo "::error::Không tìm thấy dự án Android."
+              find . -maxdepth 8 -type f \
+                \( -name settings.gradle \
+                   -o -name settings.gradle.kts \
+                   -o -name build.gradle \
+                   -o -name build.gradle.kts \)
               exit 1
             fi
-
-            ROOT="$(dirname "$FILE")"
           fi
 
           echo "dir=$ROOT" >> "$GITHUB_OUTPUT"
-          echo "Android project: $ROOT"
+          echo "Android project root: $ROOT"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -91,7 +103,7 @@ jobs:
             -maxdepth 1 -type f -name '*.apk' | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "::error::Không tìm thấy APK sau khi build."
+            echo "::error::Build xong nhưng không tìm thấy APK."
             exit 1
           fi
 
@@ -105,23 +117,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p output
-
           zip -qr output/VILA-AI-source.zip "$PROJECT_DIR" \
             -x '*/.git/*' \
                '*/.gradle/*' \
                '*/build/*' \
                '*/local.properties' \
                '*/.idea/*' \
-               '*/output/*' \
-               '*.apk' \
-               '*.aab'
+               '*.apk' '*.aab'
 
       - name: Create complete ZIP
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p output/VILA-AI-package
-
           cp output/VILA-AI-debug.apk output/VILA-AI-package/
           cp output/VILA-AI-source.zip output/VILA-AI-package/
 
@@ -134,7 +142,7 @@ jobs:
           cd output
           zip -qr VILA-AI-complete.zip VILA-AI-package
 
-      - name: Upload build artifacts
+      - name: Upload APK and ZIP artifacts
         uses: actions/upload-artifact@v4
         with:
           name: VILA-AI-Build-Files
