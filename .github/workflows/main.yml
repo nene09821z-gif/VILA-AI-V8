@@ -56,10 +56,11 @@ jobs:
         shell: bash
         run: |
           set -e
+          # Cập nhật lên API 36 và Build-tools 36.0.0 để tương thích với Gradle 9.x
           sdkmanager --install \
             "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+            "platforms;android-36" \
+            "build-tools;36.0.0"
           yes | sdkmanager --licenses || true
 
       - name: Find Android project
@@ -118,7 +119,8 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          # ĐÃ SỬA: Nâng cấp từ 8.9 lên 9.3.1 để giải quyết lỗi "Minimum supported Gradle version is 9.3.1"
+          gradle-version: '9.3.1'
 
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
