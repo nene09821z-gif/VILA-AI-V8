@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           # Đã cập nhật đúng tên file ZIP bạn đang dùng
-          ZIP_FILE="VILA_AI_V45_ADD_ACCOUNT_PROMPT.zip.oplusdownload"
+          ZIP_FILE="VILA_AI_V45_ADD_ACCOUNT_PROMPT.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
