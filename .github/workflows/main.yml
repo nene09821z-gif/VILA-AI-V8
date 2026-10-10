@@ -1,4 +1,4 @@
-name: Build VILA AI V32
+name: Build VILA AI STUDIO 
 
 on:
   workflow_dispatch:
@@ -20,12 +20,12 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP (ĐÃ CẬP NHẬT TÊN FILE MỚI) =====
+      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP (ĐÃ CẬP NHẬT ĐÚNG TÊN FILE CỦA BẠN) =====
       - name: Extract source ZIP
         shell: bash
         run: |
           set -e
-          # Đã cập nhật tên file ZIP mới tại đây
+          # Đã cập nhật đúng tên file ZIP bạn đang dùng
           ZIP_FILE="VILA_AI_ANDROID_BUILD_SHA1_FIXED.zip"
           
           if [ -f "$ZIP_FILE" ]; then
@@ -48,21 +48,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ===== BƯỚC MỚI: LẤY SHA-1 TỪ KEYSTORE =====
+      # ===== BƯỚC LẤY SHA-1 TỪ KEYSTORE =====
       - name: Get SHA-1 Fingerprint
         shell: bash
         run: |
           set -e
           echo "Đang lấy mã SHA-1 từ file keystore..."
           
-          # Kiểm tra xem file keystore có tồn tại không
           if [ ! -f "${{ secrets.KEYSTORE_PATH }}" ]; then
             echo "::error::Không tìm thấy file keystore tại đường dẫn: ${{ secrets.KEYSTORE_PATH }}"
-            echo "Hãy chắc chắn bạn đã tải file release-key.jks lên GitHub và điền đúng Secret KEYSTORE_PATH."
             exit 1
           fi
           
-          # Chạy lệnh keytool và chỉ lọc ra dòng chứa SHA1
           keytool -list -v -keystore "${{ secrets.KEYSTORE_PATH }}" -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" | grep -i "SHA1:"
       # ==========================================
 
@@ -75,7 +72,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Cập nhật lên API 36 và Build-tools 36.0.0 để tương thích với Gradle 9.x
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
@@ -106,7 +102,6 @@ jobs:
           if [ -n "$ROOT_FILE" ]; then
             PROJECT_DIR="$(dirname "$ROOT_FILE")"
           else
-            # Fallback: locate a module containing AndroidManifest.xml
             MANIFEST="$(find . -type f \
               -path '*/src/main/AndroidManifest.xml' \
               -not -path '*/.gradle/*' \
@@ -138,7 +133,6 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          # ĐÃ SỬA: Nâng cấp lên 9.3.1 để giải quyết lỗi "Minimum supported Gradle version is 9.3.1"
           gradle-version: '9.3.1'
 
       - name: Build Debug APK
