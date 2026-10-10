@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           # Đã cập nhật đúng tên file ZIP bạn đang dùng
-          ZIP_FILE="VILA_AI_V46_CLASSIC_ACCOUNT_PICKER_FIXED.zip"
+          ZIP_FILE="VILA_AI_V48_MEDIA_FILES_FIXED.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
