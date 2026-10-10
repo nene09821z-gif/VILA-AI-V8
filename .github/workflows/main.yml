@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           # Đã cập nhật đúng tên file ZIP bạn đang dùng
-          ZIP_FILE="VILA_AI_V43_LOGIN_GOOGLE_FIXED.zip"
+          ZIP_FILE="VILA_AI_V44_LOGIN_STABLE_KEYSTORE.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
