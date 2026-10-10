@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           # Đã cập nhật tên file ZIP mới tại đây
-          ZIP_FILE="VILA_AI_STUDIO_V38_FILE_REASONING_NOTIFICATIONS.zip"
+          ZIP_FILE="VILA_AI_STUDIO_V39_ADAPTIVE_MODELS_SOURCE.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
