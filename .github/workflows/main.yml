@@ -48,6 +48,24 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # ===== BƯỚC MỚI: LẤY SHA-1 TỪ KEYSTORE =====
+      - name: Get SHA-1 Fingerprint
+        shell: bash
+        run: |
+          set -e
+          echo "Đang lấy mã SHA-1 từ file keystore..."
+          
+          # Kiểm tra xem file keystore có tồn tại không
+          if [ ! -f "${{ secrets.KEYSTORE_PATH }}" ]; then
+            echo "::error::Không tìm thấy file keystore tại đường dẫn: ${{ secrets.KEYSTORE_PATH }}"
+            echo "Hãy chắc chắn bạn đã tải file release-key.jks lên GitHub và điền đúng Secret KEYSTORE_PATH."
+            exit 1
+          fi
+          
+          # Chạy lệnh keytool và chỉ lọc ra dòng chứa SHA1
+          keytool -list -v -keystore "${{ secrets.KEYSTORE_PATH }}" -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" | grep -i "SHA1:"
+      # ==========================================
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
