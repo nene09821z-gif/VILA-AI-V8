@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 1
 
       # 2. Giải nén ZIP VILA AI
-      - name: Extract VILA AI source ZIP
+      - name: VILA_AI_V54_FULL_SYSTEM_MANIFEST_SDK_FIXED.zip
         shell: bash
         run: |
           set -euo pipefail
