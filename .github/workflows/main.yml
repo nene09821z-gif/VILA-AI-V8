@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           # Đã cập nhật đúng tên file ZIP bạn đang dùng
-          ZIP_FILE="VILA_AI_V53_PARITY.zip"
+          ZIP_FILE="VILA_AI_V54_0_REAL_TOOLS.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
