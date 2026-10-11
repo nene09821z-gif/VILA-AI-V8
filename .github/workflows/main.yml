@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Extract source ZIP
         shell: bash
@@ -30,27 +32,32 @@ jobs:
             rm -f "$ZIP_FILE"
           fi
 
+          echo "=== Source root ==="
+          ls -lah
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Install Android SDK
         shell: bash
         run: |
           set -euo pipefail
 
           sdkmanager --install \
             "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0"
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
           yes | sdkmanager --licenses || true
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --list_installed
 
       - name: Find Android project
         id: locate
@@ -70,7 +77,7 @@ jobs:
           elif [ -f "./gradlew" ]; then
             PROJECT_DIR="."
           else
-            echo "::error::Không tìm thấy Gradle project."
+            echo "::error::Không tìm thấy settings.gradle hoặc gradlew."
             find . -maxdepth 5 -type f | head -200
             exit 1
           fi
@@ -78,21 +85,28 @@ jobs:
           PROJECT_DIR="$(realpath "$PROJECT_DIR")"
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+          echo "Android project: $PROJECT_DIR"
+          ls -lah "$PROJECT_DIR"
+
+      - name: Verify Gradle Wrapper
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f gradlew ]; then
+            echo "::error::Thiếu Gradle Wrapper gradlew."
+            exit 1
+          fi
+
+          chmod +x gradlew
+          ./gradlew --version
 
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ ! -f "./gradlew" ]; then
-            echo "::error::Thiếu Gradle Wrapper gradlew."
-            exit 1
-          fi
-
-          chmod +x ./gradlew
           ./gradlew --no-daemon assembleDebug
 
       - name: Collect APK
@@ -102,18 +116,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p output
+          mkdir -p "$GITHUB_WORKSPACE/output"
 
           find "$PROJECT_DIR" -type f \
             -path '*/build/outputs/apk/*/*.apk' \
-            -exec cp {} output/ \;
+            -exec cp {} "$GITHUB_WORKSPACE/output/" \;
 
-          if ! find output -type f -name '*.apk' | grep -q .; then
-            echo "::error::Không tìm thấy APK."
+          if ! find "$GITHUB_WORKSPACE/output" \
+            -maxdepth 1 -type f -name '*.apk' | grep -q .; then
+            echo "::error::Không tìm thấy APK sau khi build."
             exit 1
           fi
 
-          ls -lh output
+          ls -lh "$GITHUB_WORKSPACE/output"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
