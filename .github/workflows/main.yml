@@ -15,101 +15,131 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================================================
+      # 1. Checkout source
+      # =========================================================
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP =====
+      # =========================================================
+      # 2. Giải nén source ZIP mới
+      # =========================================================
       - name: Extract source ZIP
         shell: bash
         run: |
-          set -e
-          ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
-          
-          if [ -f "$ZIP_FILE" ]; then
-            echo "Đang giải nén $ZIP_FILE..."
-            unzip -o -q "$ZIP_FILE"
-            echo "Giải nén thành công!"
-            rm -f "$ZIP_FILE"
-            echo "=== Các file sau khi giải nén ==="
-            ls -la
-          else
-            echo "Không tìm thấy file ZIP ở thư mục gốc. Bỏ qua bước này."
-          fi
-      # ==================================================
+          set -euo pipefail
 
+          ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
+
+          if [ -f "$ZIP_FILE" ]; then
+            echo "Đang giải nén $ZIP_FILE ..."
+            unzip -o -q "$ZIP_FILE"
+            rm -f "$ZIP_FILE"
+          else
+            echo "::warning::Không có $ZIP_FILE ở thư mục gốc, dùng source hiện tại."
+          fi
+
+          # Nếu ZIP giải nén ra 1 thư mục con duy nhất, đưa nội dung lên root
+          shopt -s nullglob
+          ENTRIES=(*)
+          if [ ${#ENTRIES[@]} -eq 1 ] && [ -d "${ENTRIES[0]}" ]; then
+            echo "ZIP chứa 1 thư mục con: ${ENTRIES[0]} -> di chuyển lên root"
+            shopt -s dotglob
+            mv "${ENTRIES[0]}"/* . 2>/dev/null || true
+            shopt -u dotglob
+            rmdir "${ENTRIES[0]}" 2>/dev/null || true
+          fi
+          shopt -u nullglob
+
+          echo "=== Source files ==="
+          ls -lah
+
+      # =========================================================
+      # 3. Setup Java 17
+      # =========================================================
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      # ===== BƯỚC LẤY SHA-1 TỪ KEYSTORE (TỰ ĐỘNG TÌM FILE) =====
-      - name: Get SHA-1 Fingerprint
-        shell: bash
-        run: |
-          set -e
-          echo "Đang tìm file keystore trong mã nguồn..."
-          
-          # Tự động tìm file .jks hoặc .keystore (bỏ qua các thư mục build, .gradle, .git)
-          KEYSTORE_FILE=$(find . -type f \( -name "*.jks" -o -name "*.keystore" \) -not -path "*/build/*" -not -path "*/.gradle/*" -not -path "*/.git/*" -print -quit)
-
-          if [ -z "$KEYSTORE_FILE" ]; then
-            echo "::error::Không tìm thấy file keystore (.jks hoặc .keystore) nào trong mã nguồn."
-            echo "=== Danh sách file hiện có ==="
-            ls -la
-            exit 1
-          fi
-
-          echo "Đã tìm thấy keystore tại: $KEYSTORE_FILE"
-          
-          # Chạy lệnh keytool để lấy SHA-1
-          keytool -list -v -keystore "$KEYSTORE_FILE" -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" | grep -i "SHA1:"
-      # ==========================================
-
+      # =========================================================
+      # 4. Setup Android SDK
+      # =========================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: ''
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK packages
         shell: bash
         run: |
-          set -e
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0"
-          yes | sdkmanager --licenses || true
+          set -euo pipefail
 
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --update > /dev/null 2>&1 || true
+
+          echo "=== Build-tools khả dụng (>=34) ==="
+          sdkmanager --list 2>/dev/null | grep -E "build-tools;3[4-9]" || true
+          echo "=== Platforms khả dụng (>=34) ==="
+          sdkmanager --list 2>/dev/null | grep -E "platforms;android-3[4-9]" || true
+
+          sdkmanager --install "platform-tools" || true
+
+          # Chọn platform cao nhất có sẵn (ưu tiên 36 -> 35 -> 34)
+          for api in 36 35 34; do
+            if sdkmanager --list 2>/dev/null | grep -q "platforms;android-$api"; then
+              echo "Installing platforms;android-$api"
+              sdkmanager --install "platforms;android-$api" || true
+              break
+            fi
+          done
+
+          # Chọn build-tools cao nhất có sẵn
+          for bt in 36.0.0 35.0.0 34.0.0; do
+            if sdkmanager --list 2>/dev/null | grep -q "build-tools;$bt"; then
+              echo "Installing build-tools;$bt"
+              sdkmanager --install "build-tools;$bt" || true
+              break
+            fi
+          done
+
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+
+          echo "=== Đã cài ==="
+          ls -la "$ANDROID_HOME/platforms"   2>/dev/null || true
+          ls -la "$ANDROID_HOME/build-tools" 2>/dev/null || true
+
+      # =========================================================
+      # 5. Tìm thư mục dự án Android
+      # =========================================================
       - name: Find Android project
         id: locate
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Workspace ==="
-          pwd
-          ls -lah
-
-          echo "=== Gradle files ==="
-          find . -type f \( \
-            -name settings.gradle \
-            -o -name settings.gradle.kts \
-          \) -not -path '*/.gradle/*' -print
-
-          ROOT_FILE="$(find . -type f \( \
-            -name settings.gradle \
-            -o -name settings.gradle.kts \
-          \) -not -path '*/.gradle/*' -print -quit)"
+          ROOT_FILE="$(find . -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -not -path '*/.git/*' \
+            -not -path '*/.gradle/*' \
+            -not -path '*/build/*' \
+            -print -quit)"
 
           if [ -n "$ROOT_FILE" ]; then
             PROJECT_DIR="$(dirname "$ROOT_FILE")"
           else
             MANIFEST="$(find . -type f \
               -path '*/src/main/AndroidManifest.xml' \
+              -not -path '*/.git/*' \
               -not -path '*/.gradle/*' \
+              -not -path '*/build/*' \
               -print -quit)"
 
             if [ -n "$MANIFEST" ]; then
@@ -123,8 +153,7 @@ jobs:
             elif [ -f "./build.gradle" ] || [ -f "./build.gradle.kts" ]; then
               PROJECT_DIR="."
             else
-              echo "::error::Không tìm thấy dự án Android."
-              echo "Các file hiện có:"
+              echo "::error::Không tìm thấy dự án Android/Gradle."
               find . -maxdepth 5 -type f | head -200
               exit 1
             fi
@@ -132,58 +161,129 @@ jobs:
 
           PROJECT_DIR="$(realpath "$PROJECT_DIR")"
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Project: $PROJECT_DIR"
+          echo "Android project: $PROJECT_DIR"
           ls -lah "$PROJECT_DIR"
 
+      # =========================================================
+      # 6. Setup Gradle
+      # =========================================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1' # Lưu ý: Nếu lỗi, hãy đổi thành '8.7' hoặc phiên bản Gradle mà dự án của bạn yêu cầu
 
-      - name: Build Debug APK
+      # =========================================================
+      # 7. Tạo local.properties trỏ tới SDK
+      # =========================================================
+      - name: Prepare local.properties
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f local.properties ]; then
+            echo "sdk.dir=$ANDROID_HOME" > local.properties
+          fi
+          echo "=== local.properties ==="
+          cat local.properties
+
+      # =========================================================
+      # 8. Kiểm tra Gradle Wrapper
+      # =========================================================
+      - name: Verify Gradle wrapper
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "./gradlew" ]; then
+            echo "::error::Dự án không có gradlew. Hãy thêm Gradle Wrapper."
+            exit 1
+          fi
+          chmod +x ./gradlew
+          ./gradlew --version
+
+      # =========================================================
+      # 9. Lấy SHA-1 chữ ký debug
+      # =========================================================
+      - name: Get Android signing SHA-1
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew --no-daemon assembleDebug
-          else
-            gradle --no-daemon assembleDebug
+          ./gradlew --no-daemon signingReport \
+            2>&1 | tee "$RUNNER_TEMP/signing-report.txt" || true
+
+          echo "=== SHA-1 fingerprints ==="
+          grep -i -E 'Variant:|Config:|Store:|Alias:|SHA1:' \
+            "$RUNNER_TEMP/signing-report.txt" || true
+
+          if ! grep -qi 'SHA1:' "$RUNNER_TEMP/signing-report.txt"; then
+            echo "::warning::Không thấy SHA-1 (có thể do AGP hoặc signing config)."
           fi
 
-      - name: Collect APK
-        id: apk
+      # =========================================================
+      # 10. Build Debug APK
+      # =========================================================
+      - name: Build Debug APK
+        working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      # =========================================================
+      # 11. Thu thập APK
+      # =========================================================
+      - name: Collect APK
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -euo pipefail
 
           mkdir -p "$GITHUB_WORKSPACE/output"
-          PROJECT_DIR="${{ steps.locate.outputs.project_dir }}"
 
           find "$PROJECT_DIR" -type f -name '*.apk' \
             -not -path '*/build/intermediates/*' \
+            -not -path '*/build/outputs/apk/androidTest/*' \
             -exec cp {} "$GITHUB_WORKSPACE/output/" \;
 
-          if ! find "$GITHUB_WORKSPACE/output" -type f -name '*.apk' | grep -q .; then
-            echo "::error::Build xong nhưng không tìm thấy APK."
+          if ! find "$GITHUB_WORKSPACE/output" \
+            -maxdepth 1 -type f -name '*.apk' | grep -q .; then
+            echo "::error::Không tìm thấy APK sau khi build."
             exit 1
           fi
 
           ls -lh "$GITHUB_WORKSPACE/output"
 
+      # =========================================================
+      # 12. Đóng gói source ZIP (đã loại file nhạy cảm)
+      # =========================================================
       - name: Package source ZIP
         shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -euo pipefail
-          PROJECT_DIR="${{ steps.locate.outputs.project_dir }}"
 
           cd "$PROJECT_DIR"
-          zip -qr "$GITHUB_WORKSPACE/output/VILA_AI_SOURCE.zip" . \
-            -x '*/.git/*' '*/.gradle/*' '*/build/*'
 
-      - name: Upload APK and ZIP
+          zip -qr "$GITHUB_WORKSPACE/output/VILA_AI_SOURCE.zip" . \
+            -x '*/.git/*' \
+               '*/.gradle/*' \
+               '*/build/*' \
+               '*/local.properties' \
+               '*/.env' \
+               '*/.env.*' \
+               '*/google-services.json' \
+               '*/keystore.properties' \
+               '*/signing.properties' \
+               '*/secrets/*' \
+               '*.jks' \
+               '*.keystore'
+
+      # =========================================================
+      # 13. Upload artifact
+      # =========================================================
+      - name: Upload APK and source
         uses: actions/upload-artifact@v4
         with:
           name: VILA-AI-Android-Build
