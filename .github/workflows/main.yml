@@ -41,7 +41,7 @@ jobs:
             echo "::warning::Không có $ZIP_FILE ở thư mục gốc, dùng source hiện tại."
           fi
 
-          # Nếu ZIP giải nén ra 1 thư mục con duy nhất -> đưa lên root
+          # Nếu ZIP giải nén ra 1 thư mục con duy nhất -> đưa nội dung lên root
           shopt -s nullglob
           ENTRIES=(*)
           if [ ${#ENTRIES[@]} -eq 1 ] && [ -d "${ENTRIES[0]}" ]; then
@@ -53,8 +53,10 @@ jobs:
           fi
           shopt -u nullglob
 
-          echo "=== Source files ==="
-          ls -lah
+          echo "=== Cấu trúc source (2 cấp) ==="
+          find . -maxdepth 2 -type f -not -path './.git/*' | head -100
+          echo "=== Kiểm tra gradlew / gradle wrapper ==="
+          find . -maxdepth 3 \( -name 'gradlew' -o -name 'gradlew.bat' -o -name 'gradle-wrapper.jar' -o -name 'gradle-wrapper.properties' \) -not -path './.git/*' || true
 
       # =========================================================
       # 3. Setup Java 17
@@ -67,25 +69,22 @@ jobs:
           cache: gradle
 
       # =========================================================
-      # 4. Cấu hình Android SDK THỦ CÔNG (thay action bị lỗi)
+      # 4. Cấu hình Android SDK THỦ CÔNG
       # =========================================================
       - name: Setup Android SDK (manual)
         shell: bash
         run: |
           set -euo pipefail
 
-          # Runner ubuntu-latest đã có sẵn SDK tại đây
           export ANDROID_HOME=/usr/local/lib/android/sdk
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
           echo "ANDROID_HOME=$ANDROID_HOME"         >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
 
-          # Đưa cmdline-tools + platform-tools vào PATH
           if [ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]; then
             echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           else
-            # Fallback: tải cmdline-tools nếu runner thiếu
             mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
             wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdline-tools.zip
             unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
@@ -96,54 +95,37 @@ jobs:
 
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-          # Kiểm tra SDK có hoạt động không
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
-
       # =========================================================
-      # 5. Cài đặt các gói Android SDK cần thiết
+      # 5. Cài đặt các gói Android SDK
       # =========================================================
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "sdkmanager: $(which sdkmanager)"
-
-          # Chấp nhận license
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-
-          # Cập nhật repo (bỏ qua nếu có lỗi tạm)
           sdkmanager --update > /dev/null 2>&1 || true
-
-          # Cài platform-tools
           sdkmanager --install "platform-tools" || true
 
-          # Chọn platform API cao nhất có sẵn (36 -> 35 -> 34)
           for api in 36 35 34; do
             if sdkmanager --list 2>/dev/null | grep -q "platforms;android-$api"; then
-              echo ">>> Cài platforms;android-$api"
               sdkmanager --install "platforms;android-$api" || true
               break
             fi
           done
 
-          # Chọn build-tools cao nhất có sẵn (36.0.0 -> 35.0.0 -> 34.0.0)
           for bt in 36.0.0 35.0.0 34.0.0; do
             if sdkmanager --list 2>/dev/null | grep -q "build-tools;$bt"; then
-              echo ">>> Cài build-tools;$bt"
               sdkmanager --install "build-tools;$bt" || true
               break
             fi
           done
 
-          # License lần cuối
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
 
-          echo "=== Đã cài platforms ==="
+          echo "=== platforms ==="
           ls -la "$ANDROID_HOME/platforms"   2>/dev/null || true
-          echo "=== Đã cài build-tools ==="
+          echo "=== build-tools ==="
           ls -la "$ANDROID_HOME/build-tools" 2>/dev/null || true
 
       # =========================================================
@@ -194,7 +176,7 @@ jobs:
           ls -lah "$PROJECT_DIR"
 
       # =========================================================
-      # 7. Setup Gradle
+      # 7. Setup Gradle (cài sẵn cả lệnh `gradle` toàn cục)
       # =========================================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -208,23 +190,56 @@ jobs:
         run: |
           set -euo pipefail
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "=== local.properties ==="
           cat local.properties
 
       # =========================================================
-      # 9. Kiểm tra Gradle Wrapper
+      # 9. Đảm bảo Gradle Wrapper (tự tạo nếu thiếu)  ⭐ QUAN TRỌNG
       # =========================================================
-      - name: Verify Gradle wrapper
+      - name: Ensure Gradle wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f "./gradlew" ]; then
-            echo "::error::Dự án không có gradlew. Hãy thêm Gradle Wrapper."
-            exit 1
+
+          if [ -f "./gradlew" ]; then
+            echo "Đã có gradlew."
+            chmod +x ./gradlew
+            ./gradlew --version
+            echo "GRADLE_CMD=./gradlew" >> "$GITHUB_ENV"
+            exit 0
           fi
-          chmod +x ./gradlew
-          ./gradlew --version
+
+          echo "::warning::Không có gradlew. Kiểm tra thư mục:"
+          ls -lah
+
+          # Nếu có sẵn gradle-wrapper.jar + properties -> chỉ cần tải script gradlew
+          if [ -f "gradle/wrapper/gradle-wrapper.jar" ] && \
+             [ -f "gradle/wrapper/gradle-wrapper.properties" ]; then
+            echo ">>> Có wrapper jar, chỉ thiếu script gradlew -> tải từ Gradle repo"
+
+            GRADLE_VER="$(grep -oP 'gradle-\K[0-9.]+(?=-(bin|all))' \
+              gradle/wrapper/gradle-wrapper.properties | head -n1 || true)"
+            [ -z "$GRADLE_VER" ] && GRADLE_VER="8.9"
+
+            curl -fsSL -o gradlew \
+              "https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VER}.0/gradlew" \
+              || curl -fsSL -o gradlew \
+              "https://raw.githubusercontent.com/gradle/gradle/master/gradlew"
+
+            curl -fsSL -o gradlew.bat \
+              "https://raw.githubusercontent.com/gradle/gradle/master/gradlew.bat" || true
+
+            chmod +x gradlew
+            ./gradlew --version
+            echo "GRADLE_CMD=./gradlew" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # Không có gì cả -> dùng gradle hệ thống
+          echo ">>> Không có wrapper, dùng Gradle hệ thống"
+          which gradle
+          gradle --version
+          echo "GRADLE_CMD=gradle" >> "$GITHUB_ENV"
 
       # =========================================================
       # 10. Lấy SHA-1 chữ ký debug
@@ -232,19 +247,17 @@ jobs:
       - name: Get Android signing SHA-1
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
+        env:
+          GRADLE_CMD: ${{ env.GRADLE_CMD }}
         run: |
           set -euo pipefail
 
-          ./gradlew --no-daemon signingReport \
+          ${GRADLE_CMD} --no-daemon signingReport \
             2>&1 | tee "$RUNNER_TEMP/signing-report.txt" || true
 
           echo "=== SHA-1 fingerprints ==="
           grep -i -E 'Variant:|Config:|Store:|Alias:|SHA1:' \
             "$RUNNER_TEMP/signing-report.txt" || true
-
-          if ! grep -qi 'SHA1:' "$RUNNER_TEMP/signing-report.txt"; then
-            echo "::warning::Không thấy SHA-1 (có thể do AGP hoặc signing config)."
-          fi
 
       # =========================================================
       # 11. Build Debug APK
@@ -252,9 +265,11 @@ jobs:
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
+        env:
+          GRADLE_CMD: ${{ env.GRADLE_CMD }}
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          ${GRADLE_CMD} --no-daemon --stacktrace assembleDebug
 
       # =========================================================
       # 12. Thu thập APK
