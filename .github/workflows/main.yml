@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 1
 
       # =========================================================
-      # 2. Giải nén source ZIP mới
+      # 2. Giải nén ZIP nguồn
       # =========================================================
       - name: Extract source ZIP
         shell: bash
@@ -41,7 +41,7 @@ jobs:
             echo "::warning::Không có $ZIP_FILE ở thư mục gốc, dùng source hiện tại."
           fi
 
-          # Nếu ZIP giải nén ra 1 thư mục con duy nhất, đưa nội dung lên root
+          # Nếu ZIP giải nén ra 1 thư mục con duy nhất -> đưa lên root
           shopt -s nullglob
           ENTRIES=(*)
           if [ ${#ENTRIES[@]} -eq 1 ] && [ -d "${ENTRIES[0]}" ]; then
@@ -67,13 +67,41 @@ jobs:
           cache: gradle
 
       # =========================================================
-      # 4. Setup Android SDK
+      # 4. Cấu hình Android SDK THỦ CÔNG (thay action bị lỗi)
       # =========================================================
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          log-accepted-android-sdk-licenses: false
+      - name: Setup Android SDK (manual)
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          # Runner ubuntu-latest đã có sẵn SDK tại đây
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+
+          echo "ANDROID_HOME=$ANDROID_HOME"         >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+          # Đưa cmdline-tools + platform-tools vào PATH
+          if [ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]; then
+            echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          else
+            # Fallback: tải cmdline-tools nếu runner thiếu
+            mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+            wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdline-tools.zip
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
+            mv /tmp/cmdline-tools-extract/cmdline-tools/* "$ANDROID_HOME/cmdline-tools/latest/"
+            rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools-extract
+            echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          fi
+
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+          # Kiểm tra SDK có hoạt động không
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+
+      # =========================================================
+      # 5. Cài đặt các gói Android SDK cần thiết
+      # =========================================================
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -81,43 +109,45 @@ jobs:
 
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "sdkmanager: $(which sdkmanager)"
 
+          # Chấp nhận license
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
+
+          # Cập nhật repo (bỏ qua nếu có lỗi tạm)
           sdkmanager --update > /dev/null 2>&1 || true
 
-          echo "=== Build-tools khả dụng (>=34) ==="
-          sdkmanager --list 2>/dev/null | grep -E "build-tools;3[4-9]" || true
-          echo "=== Platforms khả dụng (>=34) ==="
-          sdkmanager --list 2>/dev/null | grep -E "platforms;android-3[4-9]" || true
-
+          # Cài platform-tools
           sdkmanager --install "platform-tools" || true
 
-          # Chọn platform cao nhất có sẵn (ưu tiên 36 -> 35 -> 34)
+          # Chọn platform API cao nhất có sẵn (36 -> 35 -> 34)
           for api in 36 35 34; do
             if sdkmanager --list 2>/dev/null | grep -q "platforms;android-$api"; then
-              echo "Installing platforms;android-$api"
+              echo ">>> Cài platforms;android-$api"
               sdkmanager --install "platforms;android-$api" || true
               break
             fi
           done
 
-          # Chọn build-tools cao nhất có sẵn
+          # Chọn build-tools cao nhất có sẵn (36.0.0 -> 35.0.0 -> 34.0.0)
           for bt in 36.0.0 35.0.0 34.0.0; do
             if sdkmanager --list 2>/dev/null | grep -q "build-tools;$bt"; then
-              echo "Installing build-tools;$bt"
+              echo ">>> Cài build-tools;$bt"
               sdkmanager --install "build-tools;$bt" || true
               break
             fi
           done
 
+          # License lần cuối
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
 
-          echo "=== Đã cài ==="
+          echo "=== Đã cài platforms ==="
           ls -la "$ANDROID_HOME/platforms"   2>/dev/null || true
+          echo "=== Đã cài build-tools ==="
           ls -la "$ANDROID_HOME/build-tools" 2>/dev/null || true
 
       # =========================================================
-      # 5. Tìm thư mục dự án Android
+      # 6. Tìm thư mục dự án Android
       # =========================================================
       - name: Find Android project
         id: locate
@@ -145,7 +175,6 @@ jobs:
             if [ -n "$MANIFEST" ]; then
               MODULE_DIR="$(dirname "$(dirname "$(dirname "$MANIFEST")")")"
               PROJECT_DIR="$(dirname "$MODULE_DIR")"
-
               if [ ! -f "$PROJECT_DIR/build.gradle" ] && \
                  [ ! -f "$PROJECT_DIR/build.gradle.kts" ]; then
                 PROJECT_DIR="$MODULE_DIR"
@@ -165,27 +194,25 @@ jobs:
           ls -lah "$PROJECT_DIR"
 
       # =========================================================
-      # 6. Setup Gradle
+      # 7. Setup Gradle
       # =========================================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       # =========================================================
-      # 7. Tạo local.properties trỏ tới SDK
+      # 8. Tạo local.properties trỏ tới SDK
       # =========================================================
       - name: Prepare local.properties
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f local.properties ]; then
-            echo "sdk.dir=$ANDROID_HOME" > local.properties
-          fi
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
           echo "=== local.properties ==="
           cat local.properties
 
       # =========================================================
-      # 8. Kiểm tra Gradle Wrapper
+      # 9. Kiểm tra Gradle Wrapper
       # =========================================================
       - name: Verify Gradle wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
@@ -200,7 +227,7 @@ jobs:
           ./gradlew --version
 
       # =========================================================
-      # 9. Lấy SHA-1 chữ ký debug
+      # 10. Lấy SHA-1 chữ ký debug
       # =========================================================
       - name: Get Android signing SHA-1
         working-directory: ${{ steps.locate.outputs.project_dir }}
@@ -220,7 +247,7 @@ jobs:
           fi
 
       # =========================================================
-      # 10. Build Debug APK
+      # 11. Build Debug APK
       # =========================================================
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
@@ -230,7 +257,7 @@ jobs:
           ./gradlew --no-daemon --stacktrace assembleDebug
 
       # =========================================================
-      # 11. Thu thập APK
+      # 12. Thu thập APK
       # =========================================================
       - name: Collect APK
         shell: bash
@@ -255,7 +282,7 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE/output"
 
       # =========================================================
-      # 12. Đóng gói source ZIP (đã loại file nhạy cảm)
+      # 13. Đóng gói source ZIP
       # =========================================================
       - name: Package source ZIP
         shell: bash
@@ -281,7 +308,7 @@ jobs:
                '*.keystore'
 
       # =========================================================
-      # 13. Upload artifact
+      # 14. Upload artifact
       # =========================================================
       - name: Upload APK and source
         uses: actions/upload-artifact@v4
