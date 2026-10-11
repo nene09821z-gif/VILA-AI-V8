@@ -16,7 +16,7 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. Checkout source
+      # 1. Checkout
       # =========================================================
       - name: Checkout source
         uses: actions/checkout@v4
@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 1
 
       # =========================================================
-      # 2. Giải nén ZIP nguồn
+      # 2. Giải nén ZIP
       # =========================================================
       - name: Extract source ZIP
         shell: bash
@@ -41,7 +41,6 @@ jobs:
             echo "::warning::Không có $ZIP_FILE ở thư mục gốc, dùng source hiện tại."
           fi
 
-          # Nếu ZIP giải nén ra 1 thư mục con duy nhất -> đưa nội dung lên root
           shopt -s nullglob
           ENTRIES=(*)
           if [ ${#ENTRIES[@]} -eq 1 ] && [ -d "${ENTRIES[0]}" ]; then
@@ -53,13 +52,13 @@ jobs:
           fi
           shopt -u nullglob
 
-          echo "=== Cấu trúc source (2 cấp) ==="
-          find . -maxdepth 2 -type f -not -path './.git/*' | head -100
-          echo "=== Kiểm tra gradlew / gradle wrapper ==="
-          find . -maxdepth 3 \( -name 'gradlew' -o -name 'gradlew.bat' -o -name 'gradle-wrapper.jar' -o -name 'gradle-wrapper.properties' \) -not -path './.git/*' || true
+          echo "=== Cấu trúc source ==="
+          find . -maxdepth 3 -type f -not -path './.git/*' | head -150
+          echo "=== gradle wrapper files ==="
+          find . -maxdepth 4 \( -name 'gradlew' -o -name 'gradlew.bat' -o -name 'gradle-wrapper.jar' -o -name 'gradle-wrapper.properties' \) -not -path './.git/*' || true
 
       # =========================================================
-      # 3. Setup Java 17
+      # 3. Java 17
       # =========================================================
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -69,16 +68,14 @@ jobs:
           cache: gradle
 
       # =========================================================
-      # 4. Cấu hình Android SDK THỦ CÔNG
+      # 4. Android SDK thủ công
       # =========================================================
       - name: Setup Android SDK (manual)
         shell: bash
         run: |
           set -euo pipefail
-
           export ANDROID_HOME=/usr/local/lib/android/sdk
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
-
           echo "ANDROID_HOME=$ANDROID_HOME"         >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
 
@@ -92,29 +89,27 @@ jobs:
             rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools-extract
             echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           fi
-
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
       # =========================================================
-      # 5. Cài đặt các gói Android SDK
+      # 5. Cài Android SDK packages
       # =========================================================
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager --update > /dev/null 2>&1 || true
           sdkmanager --install "platform-tools" || true
 
-          for api in 36 35 34; do
+          for api in 36 35 34 33; do
             if sdkmanager --list 2>/dev/null | grep -q "platforms;android-$api"; then
               sdkmanager --install "platforms;android-$api" || true
               break
             fi
           done
 
-          for bt in 36.0.0 35.0.0 34.0.0; do
+          for bt in 36.0.0 35.0.0 34.0.0 33.0.2; do
             if sdkmanager --list 2>/dev/null | grep -q "build-tools;$bt"; then
               sdkmanager --install "build-tools;$bt" || true
               break
@@ -123,13 +118,8 @@ jobs:
 
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
 
-          echo "=== platforms ==="
-          ls -la "$ANDROID_HOME/platforms"   2>/dev/null || true
-          echo "=== build-tools ==="
-          ls -la "$ANDROID_HOME/build-tools" 2>/dev/null || true
-
       # =========================================================
-      # 6. Tìm thư mục dự án Android
+      # 6. Locate project
       # =========================================================
       - name: Find Android project
         id: locate
@@ -153,7 +143,6 @@ jobs:
               -not -path '*/.gradle/*' \
               -not -path '*/build/*' \
               -print -quit)"
-
             if [ -n "$MANIFEST" ]; then
               MODULE_DIR="$(dirname "$(dirname "$(dirname "$MANIFEST")")")"
               PROJECT_DIR="$(dirname "$MODULE_DIR")"
@@ -176,13 +165,87 @@ jobs:
           ls -lah "$PROJECT_DIR"
 
       # =========================================================
-      # 7. Setup Gradle (cài sẵn cả lệnh `gradle` toàn cục)
+      # 7. Setup Gradle
       # =========================================================
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       # =========================================================
-      # 8. Tạo local.properties trỏ tới SDK
+      # 8. ⭐ CHẨN ĐOÁN: in toàn bộ build files + versions
+      # =========================================================
+      - name: Diagnose project (print configs)
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set +e
+
+          echo "==========================================="
+          echo "  DỰ ÁN: $(pwd)"
+          echo "==========================================="
+
+          echo ""
+          echo "----- settings.gradle(.kts) -----"
+          cat settings.gradle 2>/dev/null
+          cat settings.gradle.kts 2>/dev/null
+
+          echo ""
+          echo "----- build.gradle (root) -----"
+          cat build.gradle 2>/dev/null
+          cat build.gradle.kts 2>/dev/null
+
+          echo ""
+          echo "----- gradle.properties -----"
+          cat gradle.properties 2>/dev/null
+
+          echo ""
+          echo "----- gradle/wrapper/gradle-wrapper.properties -----"
+          cat gradle/wrapper/gradle-wrapper.properties 2>/dev/null
+
+          echo ""
+          echo "----- Danh sách module -----"
+          for d in */; do
+            if [ -f "$d/build.gradle" ] || [ -f "$d/build.gradle.kts" ]; then
+              echo ">>> MODULE: $d"
+              cat "$d/build.gradle" 2>/dev/null
+              cat "$d/build.gradle.kts" 2>/dev/null
+              echo "--- AndroidManifest ($d) ---"
+              cat "$d/src/main/AndroidManifest.xml" 2>/dev/null | head -30
+              echo ""
+            fi
+          done
+
+      # =========================================================
+      # 9. ⭐ TỰ ĐỘNG VÁ: gradle.properties (AndroidX + Jetifier + JVM)
+      # =========================================================
+      - name: Patch gradle.properties
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          touch gradle.properties
+
+          add_if_missing() {
+            local key="$1"
+            local val="$2"
+            if ! grep -q "^${key}=" gradle.properties 2>/dev/null; then
+              echo "${key}=${val}" >> gradle.properties
+              echo "  + Thêm ${key}=${val}"
+            fi
+          }
+
+          echo ">>> Bổ sung cờ cần thiết vào gradle.properties"
+          add_if_missing "android.useAndroidX" "true"
+          add_if_missing "android.enableJetifier" "true"
+          add_if_missing "org.gradle.jvmargs" "-Xmx4096m -Dfile.encoding=UTF-8"
+          add_if_missing "org.gradle.daemon" "false"
+          add_if_missing "android.suppressUnsupportedCompileSdk" "36"
+
+          echo "=== gradle.properties sau khi vá ==="
+          cat gradle.properties
+
+      # =========================================================
+      # 10. local.properties
       # =========================================================
       - name: Prepare local.properties
         working-directory: ${{ steps.locate.outputs.project_dir }}
@@ -193,7 +256,7 @@ jobs:
           cat local.properties
 
       # =========================================================
-      # 9. Đảm bảo Gradle Wrapper (tự tạo nếu thiếu)  ⭐ QUAN TRỌNG
+      # 11. Đảm bảo Gradle wrapper
       # =========================================================
       - name: Ensure Gradle wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
@@ -209,20 +272,20 @@ jobs:
             exit 0
           fi
 
-          echo "::warning::Không có gradlew. Kiểm tra thư mục:"
-          ls -lah
+          echo "::warning::Không có gradlew. Đang tìm wrapper jar..."
 
-          # Nếu có sẵn gradle-wrapper.jar + properties -> chỉ cần tải script gradlew
           if [ -f "gradle/wrapper/gradle-wrapper.jar" ] && \
              [ -f "gradle/wrapper/gradle-wrapper.properties" ]; then
-            echo ">>> Có wrapper jar, chỉ thiếu script gradlew -> tải từ Gradle repo"
+            echo ">>> Có wrapper jar, tải script gradlew tương ứng"
 
             GRADLE_VER="$(grep -oP 'gradle-\K[0-9.]+(?=-(bin|all))' \
               gradle/wrapper/gradle-wrapper.properties | head -n1 || true)"
             [ -z "$GRADLE_VER" ] && GRADLE_VER="8.9"
 
+            echo "Gradle version phát hiện: $GRADLE_VER"
+
             curl -fsSL -o gradlew \
-              "https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VER}.0/gradlew" \
+              "https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VER}/gradlew" \
               || curl -fsSL -o gradlew \
               "https://raw.githubusercontent.com/gradle/gradle/master/gradlew"
 
@@ -235,44 +298,166 @@ jobs:
             exit 0
           fi
 
-          # Không có gì cả -> dùng gradle hệ thống
           echo ">>> Không có wrapper, dùng Gradle hệ thống"
           which gradle
           gradle --version
           echo "GRADLE_CMD=gradle" >> "$GITHUB_ENV"
 
       # =========================================================
-      # 10. Lấy SHA-1 chữ ký debug
+      # 12. ⭐ TỰ ĐỘNG VÁ NAMESPACE (AGP 8+ bắt buộc)
       # =========================================================
-      - name: Get Android signing SHA-1
+      - name: Auto-patch missing namespace
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set +e
+
+          patch_gradle_file() {
+            local file="$1"
+            [ -f "$file" ] || return 0
+
+            if grep -qE '^\s*namespace\s' "$file"; then
+              echo "  [OK] $file đã có namespace"
+              return 0
+            fi
+
+            # Tìm applicationId làm namespace
+            local appid
+            appid="$(grep -oP 'applicationId\s*[= ]\s*["'"'"']\K[^"'"'"']+' "$file" | head -n1)"
+
+            if [ -z "$appid" ]; then
+              echo "  [SKIP] $file không có applicationId"
+              return 0
+            fi
+
+            echo "  [PATCH] $file: thêm namespace = \"$appid\""
+
+            if [[ "$file" == *.kts ]]; then
+              # Kotlin DSL: chèn vào block android {
+              perl -0pi -e "s/(android\s*\{)/\$1\n    namespace = \"$appid\"/" "$file"
+            else
+              # Groovy DSL
+              perl -0pi -e "s/(android\s*\{)/\$1\n    namespace \"$appid\"/" "$file"
+            fi
+          }
+
+          echo ">>> Quét module và vá namespace"
+          for d in */; do
+            if [ -f "$d/build.gradle" ]; then
+              patch_gradle_file "$d/build.gradle"
+            fi
+            if [ -f "$d/build.gradle.kts" ]; then
+              patch_gradle_file "$d/build.gradle.kts"
+            fi
+          done
+
+      # =========================================================
+      # 13. ⭐ THỬ BUILD với fallback compileSdk
+      # =========================================================
+      - name: Build Debug APK (attempt 1 - nguyên bản)
+        id: build1
+        continue-on-error: true
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         env:
           GRADLE_CMD: ${{ env.GRADLE_CMD }}
         run: |
-          set -euo pipefail
+          set -o pipefail
+          ${GRADLE_CMD} --no-daemon --stacktrace --info assembleDebug 2>&1 | tee "$RUNNER_TEMP/build1.log"
+          exit ${PIPESTATUS[0]}
 
-          ${GRADLE_CMD} --no-daemon signingReport \
-            2>&1 | tee "$RUNNER_TEMP/signing-report.txt" || true
-
-          echo "=== SHA-1 fingerprints ==="
-          grep -i -E 'Variant:|Config:|Store:|Alias:|SHA1:' \
-            "$RUNNER_TEMP/signing-report.txt" || true
+      - name: Show build1 summary
+        if: steps.build1.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "=== 60 dòng lỗi cuối cùng của build1 ==="
+          tail -120 "$RUNNER_TEMP/build1.log" || true
+          echo ""
+          echo "=== Các dòng chứa error/FAILURE ==="
+          grep -iE 'error:|FAILURE:|What went wrong|Could not|Unsupported|Namespace|Duplicate|minimum supported|A problem occurred' \
+            "$RUNNER_TEMP/build1.log" | tail -60 || true
 
       # =========================================================
-      # 11. Build Debug APK
+      # 14. Fallback: ép compileSdk / buildToolsVersion về bản có sẵn
       # =========================================================
-      - name: Build Debug APK
+      - name: Fallback - force compileSdk 35
+        if: steps.build1.outcome == 'failure'
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -e
+
+          # Tìm compileSdk cao nhất có sẵn trong SDK
+          AVAIL_SDK="$(ls "$ANDROID_HOME/platforms" 2>/dev/null | grep -oP 'android-\K[0-9]+' | sort -n | tail -1)"
+          AVAIL_BT="$(ls "$ANDROID_HOME/build-tools" 2>/dev/null | sort -V | tail -1)"
+          [ -z "$AVAIL_SDK" ] && AVAIL_SDK=35
+          [ -z "$AVAIL_BT" ]  && AVAIL_BT=35.0.0
+
+          echo ">>> Sẽ ép: compileSdk=$AVAIL_SDK, buildTools=$AVAIL_BT"
+
+          for f in */build.gradle */build.gradle.kts build.gradle build.gradle.kts; do
+            [ -f "$f" ] || continue
+
+            if [[ "$f" == *.kts ]]; then
+              sed -i -E "s/compileSdk(Version)?\s*=?\s*[0-9]+/compileSdk = $AVAIL_SDK/g" "$f" || true
+              sed -i -E "s/buildToolsVersion\s*=?\s*\"[^\"]+\"/buildToolsVersion = \"$AVAIL_BT\"/g" "$f" || true
+              sed -i -E "s/targetSdk(Version)?\s*=?\s*[0-9]+/targetSdk = $AVAIL_SDK/g" "$f" || true
+            else
+              sed -i -E "s/compileSdk(Version)?\s+[0-9]+/compileSdk $AVAIL_SDK/g" "$f" || true
+              sed -i -E "s/buildToolsVersion\s+\"[^\"]+\"/buildToolsVersion \"$AVAIL_BT\"/g" "$f" || true
+              sed -i -E "s/targetSdk(Version)?\s+[0-9]+/targetSdk $AVAIL_SDK/g" "$f" || true
+            fi
+          done
+
+          echo "=== Sau khi vá ==="
+          grep -rE "compileSdk|buildTools|targetSdk" */build.gradle* build.gradle* 2>/dev/null || true
+
+      # =========================================================
+      # 15. Thử build lần 2 (sau fallback)
+      # =========================================================
+      - name: Build Debug APK (attempt 2 - sau fallback)
+        id: build2
+        if: steps.build1.outcome == 'failure'
+        continue-on-error: true
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         env:
           GRADLE_CMD: ${{ env.GRADLE_CMD }}
         run: |
-          set -euo pipefail
-          ${GRADLE_CMD} --no-daemon --stacktrace assembleDebug
+          set -o pipefail
+          ${GRADLE_CMD} --no-daemon --stacktrace assembleDebug --refresh-dependencies 2>&1 | tee "$RUNNER_TEMP/build2.log"
+          exit ${PIPESTATUS[0]}
+
+      - name: Show build2 summary
+        if: steps.build1.outcome == 'failure' && steps.build2.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "=== 120 dòng cuối build2 ==="
+          tail -120 "$RUNNER_TEMP/build2.log" || true
 
       # =========================================================
-      # 12. Thu thập APK
+      # 16. Fail workflow nếu cả 2 build đều thất bại
+      # =========================================================
+      - name: Fail if both builds failed
+        if: steps.build1.outcome == 'failure' && steps.build2.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::error::Cả 2 lần build đều thất bại. Xem log ở 2 bước trên."
+
+          # In gợi ý dựa trên lỗi phát hiện
+          if grep -qi 'minimum supported gradle version' "$RUNNER_TEMP/build2.log" 2>/dev/null; then
+            echo "::error::Gradle quá cũ so với AGP. Cần nâng Gradle wrapper."
+          fi
+          if grep -qi 'namespace not specified' "$RUNNER_TEMP/build2.log" 2>/dev/null; then
+            echo "::error::Thiếu namespace trong module build.gradle."
+          fi
+          if grep -qi 'Could not resolve' "$RUNNER_TEMP/build2.log" 2>/dev/null; then
+            echo "::error::Không resolve được dependency. Có thể do repo thiếu google() / mavenCentral()."
+          fi
+          exit 1
+
+      # =========================================================
+      # 17. Thu thập APK
       # =========================================================
       - name: Collect APK
         shell: bash
@@ -280,9 +465,7 @@ jobs:
           PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -euo pipefail
-
           mkdir -p "$GITHUB_WORKSPACE/output"
-
           find "$PROJECT_DIR" -type f -name '*.apk' \
             -not -path '*/build/intermediates/*' \
             -not -path '*/build/outputs/apk/androidTest/*' \
@@ -290,14 +473,13 @@ jobs:
 
           if ! find "$GITHUB_WORKSPACE/output" \
             -maxdepth 1 -type f -name '*.apk' | grep -q .; then
-            echo "::error::Không tìm thấy APK sau khi build."
+            echo "::error::Không tìm thấy APK."
             exit 1
           fi
-
           ls -lh "$GITHUB_WORKSPACE/output"
 
       # =========================================================
-      # 13. Đóng gói source ZIP
+      # 18. Đóng gói source
       # =========================================================
       - name: Package source ZIP
         shell: bash
@@ -305,25 +487,16 @@ jobs:
           PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
-
           zip -qr "$GITHUB_WORKSPACE/output/VILA_AI_SOURCE.zip" . \
-            -x '*/.git/*' \
-               '*/.gradle/*' \
-               '*/build/*' \
-               '*/local.properties' \
-               '*/.env' \
-               '*/.env.*' \
-               '*/google-services.json' \
-               '*/keystore.properties' \
-               '*/signing.properties' \
-               '*/secrets/*' \
-               '*.jks' \
-               '*.keystore'
+            -x '*/.git/*' '*/.gradle/*' '*/build/*' \
+               '*/local.properties' '*/.env' '*/.env.*' \
+               '*/google-services.json' '*/keystore.properties' \
+               '*/signing.properties' '*/secrets/*' \
+               '*.jks' '*.keystore'
 
       # =========================================================
-      # 14. Upload artifact
+      # 19. Upload
       # =========================================================
       - name: Upload APK and source
         uses: actions/upload-artifact@v4
