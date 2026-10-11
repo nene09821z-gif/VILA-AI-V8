@@ -1,4 +1,4 @@
-name: Build VILA AI STUDIO 
+name: Build VILA AI STUDIO
 
 on:
   workflow_dispatch:
@@ -20,20 +20,17 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP (ĐÃ CẬP NHẬT ĐÚNG TÊN FILE CỦA BẠN) =====
+      # ===== BƯỚC TỰ ĐỘNG GIẢI NÉN ZIP =====
       - name: Extract source ZIP
         shell: bash
         run: |
           set -e
-          # Đã cập nhật đúng tên file ZIP bạn đang dùng
           ZIP_FILE="VILA_AI_V54_0_REAL_TOOLS.zip"
           
           if [ -f "$ZIP_FILE" ]; then
             echo "Đang giải nén $ZIP_FILE..."
-            # Thêm -o để tự động ghi đè nếu file đã tồn tại
             unzip -o -q "$ZIP_FILE"
             echo "Giải nén thành công!"
-            # Xóa file zip sau khi giải nén để tránh nhầm lẫn
             rm -f "$ZIP_FILE"
             echo "=== Các file sau khi giải nén ==="
             ls -la
@@ -48,6 +45,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # ===== BƯỚC GIẢI MÃ KEYSTORE TỪ BASE64 =====
+      - name: Decode Keystore
+        shell: bash
+        run: |
+          echo "Đang giải mã keystore từ Base64..."
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > my-release-key.jks
+      # ==========================================
+
       # ===== BƯỚC LẤY SHA-1 TỪ KEYSTORE =====
       - name: Get SHA-1 Fingerprint
         shell: bash
@@ -55,12 +60,12 @@ jobs:
           set -e
           echo "Đang lấy mã SHA-1 từ file keystore..."
           
-          if [ ! -f "${{ secrets.KEYSTORE_PATH }}" ]; then
-            echo "::error::Không tìm thấy file keystore tại đường dẫn: ${{ secrets.KEYSTORE_PATH }}"
+          if [ ! -f "my-release-key.jks" ]; then
+            echo "::error::Không tìm thấy file keystore my-release-key.jks"
             exit 1
           fi
           
-          keytool -list -v -keystore "${{ secrets.KEYSTORE_PATH }}" -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" | grep -i "SHA1:"
+          keytool -list -v -keystore "my-release-key.jks" -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" | grep -i "SHA1:"
       # ==========================================
 
       - name: Setup Android SDK
