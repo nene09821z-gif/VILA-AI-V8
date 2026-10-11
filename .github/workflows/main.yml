@@ -123,22 +123,29 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --version
 
-      # 7. DEBUG: Kiểm tra cấu trúc dự án trước khi build
-      # Bước này giúp bạn xem có file quan trọng nào bị thiếu không (ví dụ: app/build.gradle, google-services.json)
+      # 7. DEBUG: Kiểm tra cấu trúc dự án trước khi build (Đã sửa lỗi Broken pipe)
       - name: Debug Project Structure
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
-          echo "=== Cấu trúc thư mục dự án ==="
-          ls -R . | head -n 100
-          echo "=== Kiểm tra file app/build.gradle ==="
+          echo "=== Cấu trúc thư mục dự án (Giới hạn độ sâu) ==="
+          find . -maxdepth 2 -type d | sort
+          echo "=== Các file ở thư mục gốc ==="
+          ls -lah
+          echo "=== Kiểm tra file build.gradle module app ==="
           if [ -f "app/build.gradle" ]; then
+            echo "Đã tìm thấy app/build.gradle"
             cat app/build.gradle
           elif [ -f "app/build.gradle.kts" ]; then
+            echo "Đã tìm thấy app/build.gradle.kts"
             cat app/build.gradle.kts
           else
             echo "::warning::Không tìm thấy file build.gradle của module app."
           fi
+          echo "=== Kiểm tra file settings.gradle ==="
+          ls -lah settings.gradle* || true
+          echo "=== Kiểm tra Gradle Wrapper ==="
+          ls -lah gradlew gradle/wrapper/gradle-wrapper.properties || true
 
       # 8. BUILD APK DEBUG (Bước quan trọng nhất)
       - name: Build Debug APK
@@ -146,8 +153,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Thêm --warning-mode all để xem chi tiết các cảnh báo
-          # Thêm --stacktrace để xem chi tiết lỗi nếu có
+          # Lệnh build APK debug
           ./gradlew --no-daemon --stacktrace --warning-mode all assembleDebug
 
       # 9. Tìm và kiểm tra APK
