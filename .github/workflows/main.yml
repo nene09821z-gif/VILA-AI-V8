@@ -45,7 +45,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Cài đặt Android SDK
+      # 4. Cài đặt Android SDK (Không dùng action gây lỗi packages: '')
       - name: Setup Android SDK Manually
         shell: bash
         run: |
@@ -126,25 +126,18 @@ jobs:
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
-          # Tạm tắt chế độ dừng ngay khi có lỗi để có thể xử lý log
           set +e 
-          
           echo "Bắt đầu build APK Debug..."
-          # Chạy lệnh build, lưu toàn bộ log vào file build_full.log
           ./gradlew --no-daemon --stacktrace --warning-mode all assembleDebug > build_full.log 2>&1
           BUILD_STATUS=$?
-          
           if [ $BUILD_STATUS -ne 0 ]; then
             echo "====================================================="
             echo "::error::BUILD THẤT BẠI. ĐANG TRÍCH XUẤT THÔNG TIN LỖI..."
             echo "====================================================="
-            
             echo "--- 100 dòng trước và 150 dòng sau dòng FAILURE ---"
             grep -n -A 150 -B 100 "FAILURE: Build failed" build_full.log || true
-            
             echo "--- Các dòng lỗi biên dịch (error, e:, Caused by) ---"
             grep -n -E "error:|e: |Caused by:|What went wrong" build_full.log || true
-            
             echo "====================================================="
             exit 1
           else
