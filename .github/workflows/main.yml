@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
+          ZIP_FILE="VILA_AI_V54_FULL_SYSTEM_MANIFEST_SDK_FIXED.zip"
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
             exit 1
