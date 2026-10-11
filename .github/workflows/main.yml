@@ -27,21 +27,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
-
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
             echo "Hãy tải ZIP lên GitHub cùng cấp với thư mục .github."
             exit 1
           fi
-
           mkdir -p "$RUNNER_TEMP/vila-source"
           unzip -o -q "$ZIP_FILE" -d "$RUNNER_TEMP/vila-source"
-
-          # Chỉ giải nén vào workspace sau khi kiểm tra ZIP.
           cp -a "$RUNNER_TEMP/vila-source/." "$GITHUB_WORKSPACE/"
-
           echo "=== Files after extraction ==="
           ls -lah
 
@@ -52,43 +46,53 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Cài Android SDK
-      # Không truyền packages: '' vì có thể khiến action tìm package tools.
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      # 5. Cài các SDK Platform và Build Tools
-      - name: Install Android SDK packages
+      # 4. Cài đặt Android SDK (Đã sửa lỗi)
+      # Thay thế action bị lỗi bằng script cấu hình thủ công
+      - name: Setup Android SDK Manually
         shell: bash
         run: |
           set -euo pipefail
-
+          
+          # Sử dụng SDK có sẵn trên GitHub Runner
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          
+          # Tìm thư mục cmdline-tools hiện có và thêm vào PATH
+          CMDLINE_TOOLS_BIN=$(find $ANDROID_HOME/cmdline-tools -type d -name "bin" | head -n 1)
+          if [ -z "$CMDLINE_TOOLS_BIN" ]; then
+            echo "::error::Không tìm thấy cmdline-tools trên runner."
+            exit 1
+          fi
+          export PATH="$CMDLINE_TOOLS_BIN:$ANDROID_HOME/platform-tools:$PATH"
+          
+          # Chấp nhận tất cả các license
+          echo "=== Đang chấp nhận licenses ==="
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          
+          # Cài đặt các gói SDK cần thiết
+          echo "=== Đang cài đặt các gói SDK ==="
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "platforms;android-36" \
             "build-tools;35.0.0" \
             "build-tools;36.0.0"
-
-          yes | sdkmanager --licenses || true
-
-          echo "=== Installed SDK packages ==="
+            
+          echo "=== Các gói SDK đã cài đặt ==="
           sdkmanager --list_installed
 
-      # 6. Tìm dự án Android
+      # 5. Tìm dự án Android
       - name: Find Android project
         id: locate
         shell: bash
         run: |
           set -euo pipefail
-
           ROOT_FILE="$(find "$GITHUB_WORKSPACE" -type f \
             \( -name settings.gradle -o -name settings.gradle.kts \) \
             -not -path '*/.git/*' \
             -not -path '*/.gradle/*' \
             -not -path '*/build/*' \
             -print -quit)"
-
           if [ -n "$ROOT_FILE" ]; then
             PROJECT_DIR="$(dirname "$ROOT_FILE")"
           else
@@ -98,7 +102,6 @@ jobs:
               -not -path '*/.gradle/*' \
               -not -path '*/build/*' \
               -print -quit)"
-
             if [ -n "$WRAPPER" ]; then
               PROJECT_DIR="$(dirname "$WRAPPER")"
             else
@@ -107,40 +110,35 @@ jobs:
               exit 1
             fi
           fi
-
           PROJECT_DIR="$(realpath "$PROJECT_DIR")"
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-
           echo "=== Android project ==="
           echo "$PROJECT_DIR"
           ls -lah "$PROJECT_DIR"
 
-      # 7. Kiểm tra Gradle Wrapper
+      # 6. Kiểm tra Gradle Wrapper
       - name: Verify Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-
           if [ ! -f "./gradlew" ]; then
             echo "::error::Dự án thiếu Gradle Wrapper."
             echo "Cần thêm gradlew và gradle/wrapper vào source."
             exit 1
           fi
-
           chmod +x ./gradlew
           ./gradlew --version
 
-      # 8. Build APK debug
+      # 7. Build APK debug
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-
           ./gradlew --no-daemon --stacktrace assembleDebug
 
-      # 9. Tìm và kiểm tra APK
+      # 8. Tìm và kiểm tra APK
       - name: Collect APK
         id: collect
         shell: bash
@@ -148,26 +146,21 @@ jobs:
           PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
         run: |
           set -euo pipefail
-
           mkdir -p "$GITHUB_WORKSPACE/output"
-
           find "$PROJECT_DIR" -type f \
             -path '*/build/outputs/apk/*/*.apk' \
             -not -path '*/androidTest/*' \
             -exec cp {} "$GITHUB_WORKSPACE/output/" \;
-
           APK_COUNT="$(find "$GITHUB_WORKSPACE/output" \
             -maxdepth 1 -type f -name '*.apk' | wc -l)"
-
           if [ "$APK_COUNT" -eq 0 ]; then
             echo "::error::Build không tạo được APK."
             exit 1
           fi
-
           echo "=== APK output ==="
           ls -lh "$GITHUB_WORKSPACE/output"
 
-      # 10. Upload APK để tải về
+      # 9. Upload APK để tải về
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
