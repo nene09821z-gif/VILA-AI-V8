@@ -3,7 +3,9 @@ name: Build VILA AI STUDIO
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
@@ -13,75 +15,110 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - name: Extract ZIP
+      - name: Extract source ZIP
+        shell: bash
         run: |
-          set -e
-          [ -f VILA_AI_V54_FULL_SYSTEM.zip ] && unzip -o -q VILA_AI_V54_FULL_SYSTEM.zip && rm -f VILA_AI_V54_FULL_SYSTEM.zip || true
-          shopt -s nullglob
-          ENTRIES=(*)
-          if [ ${#ENTRIES[@]} -eq 1 ] && [ -d "${ENTRIES[0]}" ]; then
-            shopt -s dotglob; mv "${ENTRIES[0]}"/* . ; shopt -u dotglob
-            rmdir "${ENTRIES[0]}" 2>/dev/null || true
-          fi
-          ls -lah
+          set -euo pipefail
 
-      - uses: actions/setup-java@v4
+          ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
+
+          if [ -f "$ZIP_FILE" ]; then
+            unzip -o -q "$ZIP_FILE"
+            rm -f "$ZIP_FILE"
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
         run: |
-          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-          echo "/usr/local/lib/android/sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "/usr/local/lib/android/sdk/platform-tools" >> $GITHUB_PATH
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1 || true
+          set -euo pipefail
 
-      - uses: gradle/actions/setup-gradle@v4
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
 
-      - name: Locate & build (capture log)
-        id: b
-        continue-on-error: true
+          yes | sdkmanager --licenses || true
+
+      - name: Find Android project
+        id: locate
+        shell: bash
         run: |
-          PROJECT=$(dirname "$(find . -name settings.gradle -o -name settings.gradle.kts 2>/dev/null | grep -v '/build/' | head -1)")
-          [ -z "$PROJECT" ] && PROJECT="."
-          cd "$PROJECT"
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          set -euo pipefail
 
-          # Dùng gradlew nếu có, không thì gradle hệ thống
-          if [ -f ./gradlew ]; then chmod +x ./gradlew; CMD=./gradlew; else CMD=gradle; fi
-          echo "GRADLE_CMD=$CMD" >> $GITHUB_ENV
+          ROOT_FILE="$(find . -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -not -path '*/.git/*' \
+            -not -path '*/.gradle/*' \
+            -not -path '*/build/*' \
+            -print -quit)"
 
-          mkdir -p "$GITHUB_WORKSPACE/logs"
+          if [ -n "$ROOT_FILE" ]; then
+            PROJECT_DIR="$(dirname "$ROOT_FILE")"
+          elif [ -f "./gradlew" ]; then
+            PROJECT_DIR="."
+          else
+            echo "::error::Không tìm thấy Gradle project."
+            find . -maxdepth 5 -type f | head -200
+            exit 1
+          fi
 
-          # Chạy build, ghi log đầy đủ
-          $CMD --no-daemon assembleDebug > "$GITHUB_WORKSPACE/logs/build.log" 2>&1 || true
+          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-          # Lọc các dòng quan trọng
-          grep -nE "FAILURE:|What went wrong|Where:|> |error:|Caused by:|Could not|A problem occurred" \
-            "$GITHUB_WORKSPACE/logs/build.log" | head -100 > "$GITHUB_WORKSPACE/logs/errors.txt" || true
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-          # In ra để xem trên GitHub
-          echo "=================== LỖI CHÍNH ==================="
-          cat "$GITHUB_WORKSPACE/logs/errors.txt"
-          echo "=================================================="
-          echo ""
-          echo "=================== 40 dòng cuối ==================="
-          tail -40 "$GITHUB_WORKSPACE/logs/build.log"
+      - name: Build Debug APK
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Upload log
-        if: always()
+          if [ ! -f "./gradlew" ]; then
+            echo "::error::Thiếu Gradle Wrapper gradlew."
+            exit 1
+          fi
+
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Collect APK
+        shell: bash
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p output
+
+          find "$PROJECT_DIR" -type f \
+            -path '*/build/outputs/apk/*/*.apk' \
+            -exec cp {} output/ \;
+
+          if ! find output -type f -name '*.apk' | grep -q .; then
+            echo "::error::Không tìm thấy APK."
+            exit 1
+          fi
+
+          ls -lh output
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
-          path: logs/
-          retention-days: 3
-
-      - name: Fail nếu build lỗi
-        if: steps.b.outcome == 'failure'
-        run: exit 1
+          name: VILA-AI-APK
+          path: output/*.apk
+          if-no-files-found: error
+          retention-days: 7
