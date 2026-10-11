@@ -30,7 +30,6 @@ jobs:
           ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
-            echo "Hãy tải ZIP lên GitHub cùng cấp với thư mục .github."
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/vila-source"
@@ -46,25 +45,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Cài đặt Android SDK (Đã sửa lỗi, không dùng action gây lỗi nữa)
+      # 4. Cài đặt Android SDK
       - name: Setup Android SDK Manually
         shell: bash
         run: |
           set -euo pipefail
-          
           export ANDROID_HOME=/usr/local/lib/android/sdk
           export ANDROID_SDK_ROOT=$ANDROID_HOME
-          
           CMDLINE_TOOLS_BIN=$(find $ANDROID_HOME/cmdline-tools -type d -name "bin" | head -n 1)
           if [ -z "$CMDLINE_TOOLS_BIN" ]; then
             echo "::error::Không tìm thấy cmdline-tools trên runner."
             exit 1
           fi
           export PATH="$CMDLINE_TOOLS_BIN:$ANDROID_HOME/platform-tools:$PATH"
-          
           echo "=== Đang chấp nhận licenses ==="
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          
           echo "=== Đang cài đặt các gói SDK ==="
           sdkmanager --install \
             "platform-tools" \
@@ -72,24 +67,21 @@ jobs:
             "platforms;android-36" \
             "build-tools;35.0.0" \
             "build-tools;36.0.0"
-            
           echo "=== Các gói SDK đã cài đặt ==="
           sdkmanager --list_installed
 
-      # 5. Tìm dự án Android (Ưu tiên tìm gradlew trước)
+      # 5. Tìm dự án Android
       - name: Find Android project
         id: locate
         shell: bash
         run: |
           set -euo pipefail
-
           WRAPPER="$(find "$GITHUB_WORKSPACE" -type f \
             -name gradlew \
             -not -path '*/.git/*' \
             -not -path '*/.gradle/*' \
             -not -path '*/build/*' \
             -print -quit)"
-
           if [ -n "$WRAPPER" ]; then
             PROJECT_DIR="$(dirname "$WRAPPER")"
           else
@@ -99,54 +91,66 @@ jobs:
               -not -path '*/.gradle/*' \
               -not -path '*/build/*' \
               -print -quit)"
-
             if [ -n "$ROOT_FILE" ]; then
               PROJECT_DIR="$(dirname "$ROOT_FILE")"
             else
-              echo "::error::Không tìm thấy gradlew hoặc settings.gradle trong repository."
+              echo "::error::Không tìm thấy gradlew hoặc settings.gradle."
               find "$GITHUB_WORKSPACE" -maxdepth 6 -type f | head -200
               exit 1
             fi
           fi
-
           PROJECT_DIR="$(realpath "$PROJECT_DIR")"
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-
           echo "=== Android project ==="
           echo "$PROJECT_DIR"
           ls -lah "$PROJECT_DIR"
 
-      # 6. Kiểm tra và tự động tạo Gradle Wrapper nếu bị thiếu
+      # 6. Tự động tạo Gradle Wrapper nếu bị thiếu
       - name: Verify and Create Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-
           if [ ! -f "./gradlew" ]; then
             echo "::warning::Dự án thiếu Gradle Wrapper. Đang cố gắng tạo tự động..."
-            
             if command -v gradle &> /dev/null; then
               gradle wrapper
             else
-              echo "::error::Không tìm thấy lệnh 'gradle' trên hệ thống. Không thể tạo Gradle Wrapper tự động."
+              echo "::error::Không tìm thấy lệnh 'gradle' trên hệ thống."
               exit 1
             fi
           fi
-
           chmod +x ./gradlew
           ./gradlew --version
 
-      # 7. BUILD APK DEBUG (Bước quan trọng nhất)
+      # 7. DEBUG: Kiểm tra cấu trúc dự án trước khi build
+      # Bước này giúp bạn xem có file quan trọng nào bị thiếu không (ví dụ: app/build.gradle, google-services.json)
+      - name: Debug Project Structure
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          echo "=== Cấu trúc thư mục dự án ==="
+          ls -R . | head -n 100
+          echo "=== Kiểm tra file app/build.gradle ==="
+          if [ -f "app/build.gradle" ]; then
+            cat app/build.gradle
+          elif [ -f "app/build.gradle.kts" ]; then
+            cat app/build.gradle.kts
+          else
+            echo "::warning::Không tìm thấy file build.gradle của module app."
+          fi
+
+      # 8. BUILD APK DEBUG (Bước quan trọng nhất)
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          # Lệnh build APK debug, sử dụng --stacktrace để dễ debug nếu có lỗi
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          # Thêm --warning-mode all để xem chi tiết các cảnh báo
+          # Thêm --stacktrace để xem chi tiết lỗi nếu có
+          ./gradlew --no-daemon --stacktrace --warning-mode all assembleDebug
 
-      # 8. Tìm và kiểm tra APK
+      # 9. Tìm và kiểm tra APK
       - name: Collect APK
         id: collect
         shell: bash
@@ -155,25 +159,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/output"
-          
-          # Tìm tất cả file .apk trong thư mục build outputs và copy ra ngoài
           find "$PROJECT_DIR" -type f \
             -path '*/build/outputs/apk/*/*.apk' \
             -not -path '*/androidTest/*' \
             -exec cp {} "$GITHUB_WORKSPACE/output/" \;
-            
           APK_COUNT="$(find "$GITHUB_WORKSPACE/output" \
             -maxdepth 1 -type f -name '*.apk' | wc -l)"
-            
           if [ "$APK_COUNT" -eq 0 ]; then
             echo "::error::Build không tạo được APK."
             exit 1
           fi
-          
           echo "=== APK output ==="
           ls -lh "$GITHUB_WORKSPACE/output"
 
-      # 9. Upload APK để tải về
+      # 10. Upload APK để tải về
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
