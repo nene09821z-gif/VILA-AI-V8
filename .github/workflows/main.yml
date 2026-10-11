@@ -13,38 +13,52 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
+      # 1. Lấy mã nguồn từ GitHub
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Extract source ZIP
+      # 2. Giải nén ZIP VILA AI
+      - name: Extract VILA AI source ZIP
         shell: bash
         run: |
           set -euo pipefail
 
           ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
 
-          if [ -f "$ZIP_FILE" ]; then
-            unzip -o -q "$ZIP_FILE"
-            rm -f "$ZIP_FILE"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
+            echo "Hãy tải ZIP lên GitHub cùng cấp với thư mục .github."
+            exit 1
           fi
 
-          echo "=== Source root ==="
+          mkdir -p "$RUNNER_TEMP/vila-source"
+          unzip -o -q "$ZIP_FILE" -d "$RUNNER_TEMP/vila-source"
+
+          # Chỉ giải nén vào workspace sau khi kiểm tra ZIP.
+          cp -a "$RUNNER_TEMP/vila-source/." "$GITHUB_WORKSPACE/"
+
+          echo "=== Files after extraction ==="
           ls -lah
 
+      # 3. Cài Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
+      # 4. Cài Android SDK
+      # Không truyền packages: '' vì có thể khiến action tìm package tools.
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
+      # 5. Cài các SDK Platform và Build Tools
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
@@ -52,20 +66,23 @@ jobs:
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
-            "build-tools;35.0.0"
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "build-tools;36.0.0"
 
           yes | sdkmanager --licenses || true
 
-          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "=== Installed SDK packages ==="
           sdkmanager --list_installed
 
+      # 6. Tìm dự án Android
       - name: Find Android project
         id: locate
         shell: bash
         run: |
           set -euo pipefail
 
-          ROOT_FILE="$(find . -type f \
+          ROOT_FILE="$(find "$GITHUB_WORKSPACE" -type f \
             \( -name settings.gradle -o -name settings.gradle.kts \) \
             -not -path '*/.git/*' \
             -not -path '*/.gradle/*' \
@@ -74,42 +91,58 @@ jobs:
 
           if [ -n "$ROOT_FILE" ]; then
             PROJECT_DIR="$(dirname "$ROOT_FILE")"
-          elif [ -f "./gradlew" ]; then
-            PROJECT_DIR="."
           else
-            echo "::error::Không tìm thấy settings.gradle hoặc gradlew."
-            find . -maxdepth 5 -type f | head -200
-            exit 1
+            WRAPPER="$(find "$GITHUB_WORKSPACE" -type f \
+              -name gradlew \
+              -not -path '*/.git/*' \
+              -not -path '*/.gradle/*' \
+              -not -path '*/build/*' \
+              -print -quit)"
+
+            if [ -n "$WRAPPER" ]; then
+              PROJECT_DIR="$(dirname "$WRAPPER")"
+            else
+              echo "::error::Không tìm thấy settings.gradle hoặc gradlew."
+              find "$GITHUB_WORKSPACE" -maxdepth 6 -type f | head -200
+              exit 1
+            fi
           fi
 
           PROJECT_DIR="$(realpath "$PROJECT_DIR")"
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-          echo "Android project: $PROJECT_DIR"
+          echo "=== Android project ==="
+          echo "$PROJECT_DIR"
           ls -lah "$PROJECT_DIR"
 
+      # 7. Kiểm tra Gradle Wrapper
       - name: Verify Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ ! -f gradlew ]; then
-            echo "::error::Thiếu Gradle Wrapper gradlew."
+          if [ ! -f "./gradlew" ]; then
+            echo "::error::Dự án thiếu Gradle Wrapper."
+            echo "Cần thêm gradlew và gradle/wrapper vào source."
             exit 1
           fi
 
-          chmod +x gradlew
+          chmod +x ./gradlew
           ./gradlew --version
 
+      # 8. Build APK debug
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon assembleDebug
 
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      # 9. Tìm và kiểm tra APK
       - name: Collect APK
+        id: collect
         shell: bash
         env:
           PROJECT_DIR: ${{ steps.locate.outputs.project_dir }}
@@ -120,16 +153,21 @@ jobs:
 
           find "$PROJECT_DIR" -type f \
             -path '*/build/outputs/apk/*/*.apk' \
+            -not -path '*/androidTest/*' \
             -exec cp {} "$GITHUB_WORKSPACE/output/" \;
 
-          if ! find "$GITHUB_WORKSPACE/output" \
-            -maxdepth 1 -type f -name '*.apk' | grep -q .; then
-            echo "::error::Không tìm thấy APK sau khi build."
+          APK_COUNT="$(find "$GITHUB_WORKSPACE/output" \
+            -maxdepth 1 -type f -name '*.apk' | wc -l)"
+
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "::error::Build không tạo được APK."
             exit 1
           fi
 
+          echo "=== APK output ==="
           ls -lh "$GITHUB_WORKSPACE/output"
 
+      # 10. Upload APK để tải về
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
