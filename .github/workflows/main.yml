@@ -45,27 +45,27 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ===== BƯỚC GIẢI MÃ KEYSTORE TỪ BASE64 =====
-      - name: Decode Keystore
-        shell: bash
-        run: |
-          echo "Đang giải mã keystore từ Base64..."
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > my-release-key.jks
-      # ==========================================
-
-      # ===== BƯỚC LẤY SHA-1 TỪ KEYSTORE =====
+      # ===== BƯỚC LẤY SHA-1 TỪ KEYSTORE (TỰ ĐỘNG TÌM FILE) =====
       - name: Get SHA-1 Fingerprint
         shell: bash
         run: |
           set -e
-          echo "Đang lấy mã SHA-1 từ file keystore..."
+          echo "Đang tìm file keystore trong mã nguồn..."
           
-          if [ ! -f "my-release-key.jks" ]; then
-            echo "::error::Không tìm thấy file keystore my-release-key.jks"
+          # Tự động tìm file .jks hoặc .keystore (bỏ qua các thư mục build, .gradle, .git)
+          KEYSTORE_FILE=$(find . -type f \( -name "*.jks" -o -name "*.keystore" \) -not -path "*/build/*" -not -path "*/.gradle/*" -not -path "*/.git/*" -print -quit)
+
+          if [ -z "$KEYSTORE_FILE" ]; then
+            echo "::error::Không tìm thấy file keystore (.jks hoặc .keystore) nào trong mã nguồn."
+            echo "=== Danh sách file hiện có ==="
+            ls -la
             exit 1
           fi
+
+          echo "Đã tìm thấy keystore tại: $KEYSTORE_FILE"
           
-          keytool -list -v -keystore "my-release-key.jks" -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" | grep -i "SHA1:"
+          # Chạy lệnh keytool để lấy SHA-1
+          keytool -list -v -keystore "$KEYSTORE_FILE" -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" | grep -i "SHA1:"
       # ==========================================
 
       - name: Setup Android SDK
@@ -138,7 +138,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.3.1'
+          gradle-version: '9.3.1' # Lưu ý: Nếu lỗi, hãy đổi thành '8.7' hoặc phiên bản Gradle mà dự án của bạn yêu cầu
 
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
