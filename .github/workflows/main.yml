@@ -22,18 +22,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      # 2. Giải nén ZIP VILA AI
-      - name: VILA_AI_V54_FULL_SYSTEM_MANIFEST_SDK_FIXED.zip
+      # 2. Giải nén ZIP VILA AI (Đã cập nhật tên file mới)
+      - name: Extract VILA AI source ZIP
         shell: bash
         run: |
           set -euo pipefail
           
-          # =======================================================
-          # SỬA TÊN FILE ZIP Ở ĐÂY NẾU CẦN:
-          # Nếu file của bạn tên là VILA_AI_V54_FULL_SYSTEM_MANIFEST_SDK_FIXED.zip
-          # hãy sửa dòng dưới thành: ZIP_FILE="VILA_AI_V54_FULL_SYSTEM_MANIFEST_SDK_FIXED.zip"
-          # =======================================================
-          ZIP_FILE="VILA_AI_V54_FULL_SYSTEM.zip"
+          # ĐÃ SỬA TÊN FILE Ở ĐÂY THEO YÊU CẦU CỦA BẠN
+          ZIP_FILE="VILA_AI_V54_FULL_SYSTEM_MANIFEST_SDK_FIXED.zip"
           
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
@@ -55,7 +51,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Cài đặt Android SDK (Cơ chế cài thủ công, tránh lỗi packages: '')
+      # 4. Cài đặt Android SDK
       - name: Setup Android SDK Manually
         shell: bash
         run: |
