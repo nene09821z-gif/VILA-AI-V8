@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           
           # ĐÃ SỬA TÊN FILE Ở ĐÂY THEO YÊU CẦU CỦA BẠN
-          ZIP_FILE="VILA_AI_V57_PUTER_MODEL_PROFILES.zip"
+          ZIP_FILE="VILA_AI_V58_PREVIEW_SMOOTH_IMAGE_FIX.zip"
           
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
