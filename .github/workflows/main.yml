@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60 # Tăng nhẹ thời gian timeout để đề phòng build lâu
 
     steps:
       # 1. Lấy mã nguồn từ GitHub
@@ -22,13 +22,12 @@ jobs:
         with:
           fetch-depth: 1
 
-      # 2. Giải nén ZIP VILA AI (Đã cập nhật tên file mới)
+      # 2. Giải nén ZIP VILA AI
       - name: Extract VILA AI source ZIP
         shell: bash
         run: |
           set -euo pipefail
           
-          # ĐÃ SỬA TÊN FILE Ở ĐÂY THEO YÊU CẦU CỦA BẠN
           ZIP_FILE="VILA_AI_V70_BUILD_SECURITY.zip"
           
           if [ ! -f "$ZIP_FILE" ]; then
@@ -51,24 +50,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Cài đặt Android SDK
-      - name: Setup Android SDK Manually
+      # 4. Cài đặt Android SDK (Sử dụng Action chính thức để ổn định hơn)
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK Packages
         shell: bash
         run: |
           set -euo pipefail
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT=$ANDROID_HOME
-          
-          CMDLINE_TOOLS_BIN=$(find $ANDROID_HOME/cmdline-tools -type d -name "bin" | head -n 1)
-          if [ -z "$CMDLINE_TOOLS_BIN" ]; then
-            echo "::error::Không tìm thấy cmdline-tools trên runner."
-            exit 1
-          fi
-          export PATH="$CMDLINE_TOOLS_BIN:$ANDROID_HOME/platform-tools:$PATH"
-          
-          echo "=== Đang chấp nhận licenses ==="
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          
           echo "=== Đang cài đặt các gói SDK ==="
           sdkmanager --install \
             "platform-tools" \
@@ -117,25 +106,30 @@ jobs:
           echo "$PROJECT_DIR"
           ls -lah "$PROJECT_DIR"
 
-      # 6. Kiểm tra và tự động tạo Gradle Wrapper nếu bị thiếu
+      # 6. Cài đặt Gradle (Đảm bảo lệnh 'gradle' có sẵn trên runner)
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.2' # Chỉ định phiên bản Gradle phù hợp với dự án của bạn
+
+      # 7. Kiểm tra và tự động tạo Gradle Wrapper nếu bị thiếu
       - name: Verify and Create Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f "./gradlew" ]; then
-            echo "::warning::Dự án thiếu Gradle Wrapper. Đang cố gắng tạo tự động..."
-            if command -v gradle &> /dev/null; then
-              gradle wrapper
-            else
-              echo "::error::Không tìm thấy lệnh 'gradle' trên hệ thống. Không thể tạo Gradle Wrapper tự động."
-              exit 1
-            fi
+          WRAPPER_JAR="./gradle/wrapper/gradle-wrapper.jar"
+          
+          if [ ! -f "./gradlew" ] || [ ! -f "$WRAPPER_JAR" ]; then
+            echo "::warning::Dự án thiếu Gradle Wrapper (gradlew hoặc gradle-wrapper.jar). Đang tiến hành tạo tự động..."
+            # Lệnh này sẽ tạo lại cả gradlew, gradle-wrapper.jar và gradle-wrapper.properties
+            gradle wrapper
           fi
+          
           chmod +x ./gradlew
           ./gradlew --version
 
-      # 7. BUILD APK DEBUG (Có cơ chế bắt và lọc lỗi thông minh)
+      # 8. BUILD APK DEBUG (Có cơ chế bắt và lọc lỗi thông minh)
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
@@ -163,7 +157,7 @@ jobs:
             echo "Build thành công!"
           fi
 
-      # 8. Tìm và kiểm tra APK
+      # 9. Tìm và kiểm tra APK
       - name: Collect APK
         id: collect
         shell: bash
@@ -189,7 +183,7 @@ jobs:
           echo "=== APK output ==="
           ls -lh "$GITHUB_WORKSPACE/output"
 
-      # 9. Upload APK để tải về
+      # 10. Upload APK để tải về
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
