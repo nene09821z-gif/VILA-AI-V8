@@ -1,4 +1,4 @@
-name: Build VILA AI STUDIO
+name: Build VILA Con
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           
           # ĐÃ SỬA TÊN FILE Ở ĐÂY THEO YÊU CẦU CỦA BẠN
-          ZIP_FILE="VILA_AI_V64_1_NETAI_FULL.zip"
+          ZIP_FILE="VILA_VERIFIED_FULL_FIXED_V65.zip"
           
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
