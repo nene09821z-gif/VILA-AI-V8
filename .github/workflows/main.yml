@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60 # Tăng nhẹ thời gian timeout để đề phòng build lâu
+    timeout-minutes: 45
 
     steps:
       # 1. Lấy mã nguồn từ GitHub
@@ -50,14 +50,24 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Cài đặt Android SDK (Sử dụng Action chính thức để ổn định hơn)
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK Packages
+      # 4. Cài đặt Android SDK (GIỮ NGUYÊN CODE CỦA BẠN)
+      - name: Setup Android SDK Manually
         shell: bash
         run: |
           set -euo pipefail
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          
+          CMDLINE_TOOLS_BIN=$(find $ANDROID_HOME/cmdline-tools -type d -name "bin" | head -n 1)
+          if [ -z "$CMDLINE_TOOLS_BIN" ]; then
+            echo "::error::Không tìm thấy cmdline-tools trên runner."
+            exit 1
+          fi
+          export PATH="$CMDLINE_TOOLS_BIN:$ANDROID_HOME/platform-tools:$PATH"
+          
+          echo "=== Đang chấp nhận licenses ==="
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          
           echo "=== Đang cài đặt các gói SDK ==="
           sdkmanager --install \
             "platform-tools" \
@@ -106,11 +116,11 @@ jobs:
           echo "$PROJECT_DIR"
           ls -lah "$PROJECT_DIR"
 
-      # 6. Cài đặt Gradle (Đảm bảo lệnh 'gradle' có sẵn trên runner)
+      # 6. [THÊM MỚI] Cài đặt Gradle để có sẵn lệnh 'gradle' trên runner
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.14.2' # Chỉ định phiên bản Gradle phù hợp với dự án của bạn
+          gradle-version: '8.14.2' # Bạn có thể đổi thành phiên bản dự án đang dùng
 
       # 7. Kiểm tra và tự động tạo Gradle Wrapper nếu bị thiếu
       - name: Verify and Create Gradle Wrapper
@@ -118,14 +128,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          WRAPPER_JAR="./gradle/wrapper/gradle-wrapper.jar"
-          
-          if [ ! -f "./gradlew" ] || [ ! -f "$WRAPPER_JAR" ]; then
-            echo "::warning::Dự án thiếu Gradle Wrapper (gradlew hoặc gradle-wrapper.jar). Đang tiến hành tạo tự động..."
-            # Lệnh này sẽ tạo lại cả gradlew, gradle-wrapper.jar và gradle-wrapper.properties
+          if [ ! -f "./gradlew" ] || [ ! -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "::warning::Dự án thiếu Gradle Wrapper. Đang cố gắng tạo tự động..."
+            # Lúc này lệnh 'gradle' đã có sẵn nhờ bước 6, nên lệnh này sẽ chạy thành công
             gradle wrapper
           fi
-          
           chmod +x ./gradlew
           ./gradlew --version
 
