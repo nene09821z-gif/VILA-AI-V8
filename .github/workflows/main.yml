@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           
-          ZIP_FILE="VILA_AI_V71_CI_GRADLE_FIX.zip"
+          ZIP_FILE="VILA_AI_STUDIO_V68_1_COHESIVE_UI.zip"
           
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
