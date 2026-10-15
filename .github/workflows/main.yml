@@ -22,13 +22,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      # 2. Giải nén ZIP VILA AI
+      # 2. Giải nén ZIP VILA AI (Đã cập nhật tên file mới)
       - name: Extract VILA AI source ZIP
         shell: bash
         run: |
           set -euo pipefail
           
-          ZIP_FILE="VILA_AI_STUDIO_V68_1_COHESIVE_UI.zip"
+          # ĐÃ SỬA TÊN FILE Ở ĐÂY THEO YÊU CẦU CỦA BẠN
+          ZIP_FILE="VILA_AI_V71_CI_GRADLE_FIX.zip"
           
           if [ ! -f "$ZIP_FILE" ]; then
             echo "::error::Không tìm thấy $ZIP_FILE ở thư mục gốc repository."
@@ -50,7 +51,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Cài đặt Android SDK (GIỮ NGUYÊN CODE CỦA BẠN)
+      # 4. Cài đặt Android SDK
       - name: Setup Android SDK Manually
         shell: bash
         run: |
@@ -116,27 +117,25 @@ jobs:
           echo "$PROJECT_DIR"
           ls -lah "$PROJECT_DIR"
 
-      # 6. [THÊM MỚI] Cài đặt Gradle để có sẵn lệnh 'gradle' trên runner
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.14.2' # Bạn có thể đổi thành phiên bản dự án đang dùng
-
-      # 7. Kiểm tra và tự động tạo Gradle Wrapper nếu bị thiếu
+      # 6. Kiểm tra và tự động tạo Gradle Wrapper nếu bị thiếu
       - name: Verify and Create Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f "./gradlew" ] || [ ! -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
+          if [ ! -f "./gradlew" ]; then
             echo "::warning::Dự án thiếu Gradle Wrapper. Đang cố gắng tạo tự động..."
-            # Lúc này lệnh 'gradle' đã có sẵn nhờ bước 6, nên lệnh này sẽ chạy thành công
-            gradle wrapper
+            if command -v gradle &> /dev/null; then
+              gradle wrapper
+            else
+              echo "::error::Không tìm thấy lệnh 'gradle' trên hệ thống. Không thể tạo Gradle Wrapper tự động."
+              exit 1
+            fi
           fi
           chmod +x ./gradlew
           ./gradlew --version
 
-      # 8. BUILD APK DEBUG (Có cơ chế bắt và lọc lỗi thông minh)
+      # 7. BUILD APK DEBUG (Có cơ chế bắt và lọc lỗi thông minh)
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
@@ -164,7 +163,7 @@ jobs:
             echo "Build thành công!"
           fi
 
-      # 9. Tìm và kiểm tra APK
+      # 8. Tìm và kiểm tra APK
       - name: Collect APK
         id: collect
         shell: bash
@@ -190,11 +189,11 @@ jobs:
           echo "=== APK output ==="
           ls -lh "$GITHUB_WORKSPACE/output"
 
-      # 10. Upload APK để tải về
+      # 9. Upload APK để tải về
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VILA-AI-APK
+          name: VILA-Proo-APK
           path: output/*.apk
           if-no-files-found: error
           retention-days: 7
