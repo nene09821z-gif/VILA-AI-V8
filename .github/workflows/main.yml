@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP_FILE="$GITHUB_WORKSPACE/VILA_CHESS_v3_9_0_CHESSCOM_OPENINGS.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/VILA_CHESS_v3_9_1_FIXED_REVIEW_API_MUSIC.zip"
 
           if [[ ! -s "$ZIP_FILE" ]]; then
             echo "::error::Source ZIP missing or empty: $ZIP_FILE"
@@ -49,7 +49,7 @@ jobs:
 
           archive = (
               pathlib.Path(os.environ["GITHUB_WORKSPACE"])
-              / "VILA_CHESS_v3_9_0_CHESSCOM_OPENINGS.zip"
+              / "VILA_CHESS_v3_9_1_FIXED_REVIEW_API_MUSIC.zip"
           )
           out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chess-bot-source"
           out.mkdir(parents=True, exist_ok=True)
@@ -235,7 +235,7 @@ jobs:
       - name: Upload verified APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Chess-Bot-debug-APK-V3
+          name: Chess-Bot-debug-APK-An
           path: output/*
           if-no-files-found: error
           retention-days: 14
