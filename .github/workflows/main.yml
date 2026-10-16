@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: VERIFY ACTIVE WORKFLOW — V4
+      - name: VERIFY ACTIVE WORKFLOW — V6
         shell: bash
         run: |
           set -euo pipefail
@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP_FILE="$GITHUB_WORKSPACE/CHESS_BOT_AI_ARENA_v3_1_0_ANDROID_READY.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/CHESS_BOT_AI_ARENA_v3_3_0_VILA_UI_REFRESH.zip"
 
           if [[ ! -s "$ZIP_FILE" ]]; then
             echo "::error::Source ZIP missing or empty: $ZIP_FILE"
@@ -49,7 +49,7 @@ jobs:
 
           archive = (
               pathlib.Path(os.environ["GITHUB_WORKSPACE"])
-              / "CHESS_BOT_AI_ARENA_v3_1_0_ANDROID_READY.zip"
+              / "CHESS_BOT_AI_ARENA_v3_3_0_VILA_UI_REFRESH.zip"
           )
           out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chess-bot-source"
           out.mkdir(parents=True, exist_ok=True)
