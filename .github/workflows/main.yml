@@ -32,14 +32,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$GITHUB_WORKSPACE/CHESS_BOT_AI_ARENA_v2_6_1_STABILITY_FIX.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/CHESS_BOT_AI_ARENA_v2_6_2_EN_PASSANT_TEST_FIX.zip"
           if [[ ! -f "$ZIP_FILE" ]]; then
             echo "::error::Missing $ZIP_FILE. Upload the Chess Bot source ZIP to the repository root."
             exit 1
           fi
           python3 - <<'PY'
           import os, pathlib, zipfile
-          archive = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'CHESS_BOT_AI_ARENA_v2_6_1_STABILITY_FIX.zip'
+          archive = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'CHESS_BOT_AI_ARENA_v2_6_2_EN_PASSANT_TEST_FIX.zip'
           out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'chess-bot-source'
           out.mkdir(parents=True, exist_ok=True)
           with zipfile.ZipFile(archive) as zf:
