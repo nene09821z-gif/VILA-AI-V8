@@ -1,4 +1,5 @@
-name: Chess Bot Android APK — WORKFLOW FIX V3
+
+name: Chess Bot Android APK — WORKFLOW FIX V4
 
 on:
   workflow_dispatch:
@@ -16,13 +17,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
-      - name: VERIFY ACTIVE WORKFLOW — V3
+      - name: VERIFY ACTIVE WORKFLOW — V4
         shell: bash
         run: |
           set -euo pipefail
-          echo "WORKFLOW_REVISION=chess-android-v3-2026-10-16"
-          echo "Expected next step: Locate and safely extract Chess Bot source ZIP"
+          echo "WORKFLOW_REVISION=chess-android-v4-2026-10-16"
+          echo "APK integrity verification enabled"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,50 +34,89 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           ZIP_FILE="$GITHUB_WORKSPACE/CHESS_BOT_AI_ARENA_v2_6_2_EN_PASSANT_TEST_FIX.zip"
-          if [[ ! -f "$ZIP_FILE" ]]; then
-            echo "::error::Missing $ZIP_FILE. Upload the Chess Bot source ZIP to the repository root."
+
+          if [[ ! -s "$ZIP_FILE" ]]; then
+            echo "::error::Source ZIP missing or empty: $ZIP_FILE"
             exit 1
           fi
+
           python3 - <<'PY'
-          import os, pathlib, zipfile
-          archive = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'CHESS_BOT_AI_ARENA_v2_6_2_EN_PASSANT_TEST_FIX.zip'
-          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'chess-bot-source'
+          import os
+          import pathlib
+          import zipfile
+
+          archive = (
+              pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+              / "CHESS_BOT_AI_ARENA_v2_6_2_EN_PASSANT_TEST_FIX.zip"
+          )
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chess-bot-source"
           out.mkdir(parents=True, exist_ok=True)
+
           with zipfile.ZipFile(archive) as zf:
               entries = zf.infolist()
+
               if len(entries) > 12000:
-                  raise SystemExit('ZIP rejected: too many entries')
+                  raise SystemExit("ZIP rejected: too many entries")
+
               if sum(e.file_size for e in entries) > 700 * 1024 * 1024:
-                  raise SystemExit('ZIP rejected: expanded size exceeds 700 MB')
+                  raise SystemExit("ZIP rejected: expanded size exceeds 700 MB")
+
+              bad = zf.testzip()
+              if bad:
+                  raise SystemExit(f"Corrupt ZIP entry: {bad}")
+
               for entry in entries:
                   path = pathlib.PurePosixPath(entry.filename)
-                  if path.is_absolute() or '..' in path.parts:
-                      raise SystemExit(f'Unsafe ZIP path: {entry.filename}')
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"Unsafe ZIP path: {entry.filename}")
+
               zf.extractall(out)
-          candidates = [p for p in out.rglob('package.json') if 'node_modules' not in p.parts]
+
+          candidates = [
+              p for p in out.rglob("package.json")
+              if "node_modules" not in p.parts
+          ]
+
+          candidates = [
+              p for p in candidates
+              if (p.parent / "capacitor.config.json").is_file()
+          ]
+
           if not candidates:
-              raise SystemExit('No package.json found in source ZIP')
-          # This source archive has package.json at its project root. Fail on ambiguity rather than building the wrong project.
+              raise SystemExit(
+                  "No valid Capacitor project found in source ZIP"
+              )
+
           candidates.sort(key=lambda p: (len(p.parts), str(p)))
-          project = candidates[0].parent
-          if not (project / 'capacitor.config.json').is_file():
-              raise SystemExit(f'Found package.json but not a Capacitor project: {project}')
-          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-              output.write(f'project_dir={project}\n')
-          print(f'Using project: {project}')
+          shallowest = len(candidates[0].parts)
+          roots = [p for p in candidates if len(p.parts) == shallowest]
+
+          if len(roots) != 1:
+              raise SystemExit(
+                  "Ambiguous project roots in source ZIP: "
+                  + ", ".join(str(p.parent) for p in roots)
+              )
+
+          project = roots[0].parent
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"project_dir={project}\n")
+
+          print(f"Using project: {project}")
           PY
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '17'
+          node-version: "22"
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "21"
 
       - name: Install Node dependencies
         working-directory: ${{ steps.source.outputs.project_dir }}
@@ -83,6 +124,7 @@ jobs:
 
       - name: Check source syntax
         working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
         run: |
           set -euo pipefail
           node --check src/main.js
@@ -99,7 +141,7 @@ jobs:
       - name: Build web assets
         working-directory: ${{ steps.source.outputs.project_dir }}
         env:
-          REQUIRE_STOCKFISH: '1'
+          REQUIRE_STOCKFISH: "1"
         run: npm run build
 
       - name: Generate and sync Android project
@@ -107,9 +149,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [[ ! -f android/settings.gradle && ! -f android/settings.gradle.kts ]]; then
             npx cap add android
           fi
+
           npx cap sync android
           node scripts/apply-android-branding.mjs
           node scripts/verify-android-project.mjs
@@ -118,27 +162,81 @@ jobs:
         working-directory: ${{ steps.source.outputs.project_dir }}/android
         run: ./gradlew --no-daemon --stacktrace assembleDebug
 
-      - name: Verify APK exists
+      - name: Verify APK integrity and package contents
         id: apk
         working-directory: ${{ steps.source.outputs.project_dir }}
         shell: bash
         run: |
           set -euo pipefail
+
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
           if [[ ! -s "$APK" ]]; then
-            echo "::error::Gradle completed but APK was not found at $APK"
-            find android/app/build/outputs -maxdepth 5 -type f -print 2>/dev/null || true
+            echo "::error::APK missing or empty: $APK"
+            find android/app/build/outputs -maxdepth 5 -type f -print || true
             exit 1
           fi
+
+          command -v unzip >/dev/null || {
+            echo "::error::unzip is unavailable"
+            exit 1
+          }
+
+          unzip -t "$APK"
+
+          python3 - "$APK" <<'PY'
+          import pathlib
+          import sys
+          import zipfile
+
+          apk = pathlib.Path(sys.argv[1])
+
+          if not zipfile.is_zipfile(apk):
+              raise SystemExit("APK is not a valid ZIP-based Android package")
+
+          with zipfile.ZipFile(apk) as zf:
+              bad = zf.testzip()
+              if bad:
+                  raise SystemExit(f"Corrupt APK entry: {bad}")
+
+              names = set(zf.namelist())
+
+              if "AndroidManifest.xml" not in names:
+                  raise SystemExit("APK is missing AndroidManifest.xml")
+
+              dex_files = [
+                  name for name in names
+                  if name == "classes.dex"
+                  or (
+                      name.startswith("classes")
+                      and name.endswith(".dex")
+                      and name[7:-4].isdigit()
+                  )
+              ]
+
+              if not dex_files:
+                  raise SystemExit("APK contains no DEX bytecode")
+
+              print("APK ZIP integrity: PASS")
+              print("Android manifest: PASS")
+              print("DEX files:", ", ".join(sorted(dex_files)))
+          PY
+
           mkdir -p "$GITHUB_WORKSPACE/output"
           cp "$APK" "$GITHUB_WORKSPACE/output/Chess-Bot-debug.apk"
-          sha256sum "$GITHUB_WORKSPACE/output/Chess-Bot-debug.apk" | tee "$GITHUB_WORKSPACE/output/SHA256SUMS.txt"
+
+          cmp "$APK" "$GITHUB_WORKSPACE/output/Chess-Bot-debug.apk"
+
+          sha256sum "$GITHUB_WORKSPACE/output/Chess-Bot-debug.apk" \
+            | tee "$GITHUB_WORKSPACE/output/SHA256SUMS.txt"
+
           ls -lh "$GITHUB_WORKSPACE/output"
 
-      - name: Upload APK artifact
+      - name: Upload verified APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Chess-Bot-debug-APK
+          name: Chess-Bot-debug-APK-V4
           path: output/*
           if-no-files-found: error
           retention-days: 14
+          
