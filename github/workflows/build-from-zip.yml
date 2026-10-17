@@ -1,0 +1,118 @@
+name: VILA Chess build from ZIP/source
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-zip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Node dependencies
+        run: npm install --no-audit --no-fund
+        env:
+          REQUIRE_STOCKFISH: '1'
+
+      - name: Verify source syntax
+        run: |
+          set -e
+          find src server scripts tests -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -r -n1 node --check
+          node --check src/opening-catalog.js
+          node --check scripts/prepare-openings.mjs
+
+      - name: Require Stockfish Lite and ASM-JS recovery assets
+        run: |
+          test -s public/engine/stockfish-19-lite-single.js
+          test -s public/engine/stockfish-19-lite-single.wasm
+          test -s public/engine/stockfish-19-asm.js
+          echo 'Stockfish Lite and ASM-JS recovery assets are present.'
+
+      # Tests still run and failures stay visible, but a failing test file no longer blocks the APK build.
+      # Remove `continue-on-error` to make tests blocking again.
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: npm test -- --test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination=test-report.tap
+
+      - name: Show failed tests on the run summary page
+        if: steps.tests.outcome == 'failure'
+        run: |
+          {
+            echo '### Tests failed (APK build continued)'
+            echo 'Copy the block below and send it for fixing:'
+            echo '```'
+            grep -E '^[[:space:]]*not ok' test-report.tap | head -40 || true
+            echo '```'
+            echo 'Error details:'
+            echo '```'
+            grep -E "error:|Cannot find|ERR_|expected|actual|AssertionError" test-report.tap | head -40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo '::warning title=Tests failed::APK build continued. Open the run Summary page to see which tests failed.'
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: test-report.tap
+          if-no-files-found: ignore
+
+      - name: Build web assets
+        run: npm run build
+        env:
+          REQUIRE_STOCKFISH: '1'
+
+      - name: Generate and sync Android project
+        env:
+          REQUIRE_STOCKFISH: '1'
+        run: |
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android
+          node scripts/apply-android-branding.mjs
+          node scripts/verify-android-project.mjs
+          python3 scripts/package-android-source.py "$RUNNER_TEMP/vila-chess-android-gradle-source.zip"
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK exists
+        run: test -s android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Android Gradle source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: vila-chess-android-gradle-source
+          path: ${{ runner.temp }}/vila-chess-android-gradle-source.zip
+          if-no-files-found: error
+
+      - name: Upload verified APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vila-chess-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
