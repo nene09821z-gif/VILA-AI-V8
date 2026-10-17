@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP_FILE="$GITHUB_WORKSPACE/VILA_CHESS_V3_26_0_PREMOVE_OFFLINE_AI.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/VILA_CHESS_V3_27_0_OFFLINE_ARENA.zip"
 
           if [[ ! -s "$ZIP_FILE" ]]; then
             echo "::error::Source ZIP missing or empty: $ZIP_FILE"
@@ -49,7 +49,7 @@ jobs:
 
           archive = (
               pathlib.Path(os.environ["GITHUB_WORKSPACE"])
-              / "VILA_CHESS_V3_26_0_PREMOVE_OFFLINE_AI.zip"
+              / "VILA_CHESS_V3_27_0_OFFLINE_ARENA.zip"
           )
           out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chess-bot-source"
           out.mkdir(parents=True, exist_ok=True)
