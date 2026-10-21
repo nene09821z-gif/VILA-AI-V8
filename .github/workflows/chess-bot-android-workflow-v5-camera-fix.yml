@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP_FILE="$GITHUB_WORKSPACE/vila-chess-pro-v3_49_2-ui-fixed.zip"
+          ZIP_FILE="$GITHUB_WORKSPACE/vila-chess-pro-v3_49_2-github-source.zip"
 
           # Also accept the new name (vila-chess-pro-*-github-source.zip):
           # if the old-named ZIP is missing, use the newest github-source ZIP instead.
@@ -58,7 +58,7 @@ jobs:
 
           archive = (
               pathlib.Path(os.environ["GITHUB_WORKSPACE"])
-              / "vila-chess-pro-v3_49_2-ui-fixed.zip"
+              / "vila-chess-pro-v3_49_2-github-source.zip"
           )
           out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chess-bot-source"
           out.mkdir(parents=True, exist_ok=True)
