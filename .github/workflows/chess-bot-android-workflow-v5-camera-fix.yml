@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: VERIFY ACTIVE WORKFLOW — V5
+      - name: VERIFY ACTIVE WORKFLOW — V7
         shell: bash
         run: |
           set -euo pipefail
