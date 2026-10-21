@@ -1,0 +1,236 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      REQUIRE_STOCKFISH: "1"
+      REQUIRE_STOCKFISH_10: "1"
+      REQUIRE_OPENING_CATALOG: "1"
+      REQUIRE_PIECE_SETS: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract source ZIP
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+          import zipfile
+
+          workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "source"
+          out.mkdir(parents=True, exist_ok=True)
+
+          def natural_key(name):
+              return [int(t) if t.isdigit() else t.lower()
+                      for t in re.split(r"(\d+)", name)]
+
+          def project_roots(base):
+              roots = []
+              for pkg in base.rglob("package.json"):
+                  if "node_modules" in pkg.parts:
+                      continue
+                  if (pkg.parent / "capacitor.config.json").is_file():
+                      roots.append(pkg.parent)
+              roots.sort(key=lambda p: (len(p.parts), str(p)))
+              return roots
+
+          def zip_has_project(path):
+              try:
+                  with zipfile.ZipFile(path) as zf:
+                      names = [n for n in zf.namelist() if "node_modules/" not in n]
+              except zipfile.BadZipFile:
+                  return False
+              has_pkg = any(n == "package.json" or n.endswith("/package.json") for n in names)
+              has_cap = any(n == "capacitor.config.json" or n.endswith("/capacitor.config.json") for n in names)
+              return has_pkg and has_cap
+
+          zips = sorted(
+              (p for p in workspace.glob("*.zip") if p.is_file() and p.stat().st_size > 0),
+              key=lambda p: natural_key(p.name),
+          )
+          valid = [p for p in zips if zip_has_project(p)]
+
+          if valid:
+              archive = valid[-1]
+              print(f"Using source ZIP: {archive.name}")
+              with zipfile.ZipFile(archive) as zf:
+                  entries = zf.infolist()
+                  if len(entries) > 20000:
+                      raise SystemExit("ZIP rejected: too many entries")
+                  if sum(e.file_size for e in entries) > 900 * 1024 * 1024:
+                      raise SystemExit("ZIP rejected: expanded size exceeds 900 MB")
+                  bad = zf.testzip()
+                  if bad:
+                      raise SystemExit(f"Corrupt ZIP entry: {bad}")
+                  for e in entries:
+                      p = pathlib.PurePosixPath(e.filename.replace("\\", "/"))
+                      if p.is_absolute() or ".." in p.parts:
+                          raise SystemExit(f"Unsafe ZIP path: {e.filename}")
+                  zf.extractall(out)
+              base = out
+          elif (workspace / "package.json").is_file() and (workspace / "capacitor.config.json").is_file():
+              print("No source ZIP found, using the repository root")
+              base = workspace
+          else:
+              raise SystemExit(
+                  "No source ZIP (*.zip with package.json and capacitor.config.json) "
+                  "was found in the repository root."
+              )
+
+          roots = project_roots(base)
+          if not roots:
+              raise SystemExit("No Capacitor project found")
+          depth = len(roots[0].parts)
+          top = [r for r in roots if len(r.parts) == depth]
+          if len(top) != 1:
+              raise SystemExit("Ambiguous project roots: " + ", ".join(str(r) for r in top))
+
+          project = top[0]
+          print(f"Project directory: {project}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"project_dir={project}\n")
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: Download native Stockfish for Android ARM64
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: bash scripts/fetch-native-stockfish-android.sh
+
+      - name: Install Node dependencies
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: npm install --no-audit --no-fund
+
+      - name: Check source syntax
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          find src server scripts tests -type f \( -name '*.js' -o -name '*.mjs' \) -print0 \
+            | xargs -0 -r -n1 node --check
+          python3 -m py_compile scripts/package-android-source.py
+
+      - name: Check engine assets
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s public/engine/stockfish-19-lite-single.js
+          test -s public/engine/stockfish-19-lite-single.wasm
+          test -s public/engine/stockfish-19-asm.js
+          test -s public/engine/stockfish-10.js
+          node scripts/verify-engine-assets.mjs --release --skip-smoke
+
+      - name: Run tests
+        id: tests
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: npm test -- --test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination=test-report.tap
+
+      - name: Show failed tests in summary
+        if: always() && steps.tests.outcome == 'failure'
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: |
+          {
+            echo '### Tests failed'
+            echo '```'
+            grep -E '^[[:space:]]*not ok' test-report.tap | head -40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: ${{ steps.source.outputs.project_dir }}/test-report.tap
+          if-no-files-found: ignore
+
+      - name: Build web assets
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: npm run build
+
+      - name: Verify opening catalog
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: node scripts/verify-opening-catalog.mjs
+
+      - name: Create and configure Android project
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f android/settings.gradle && ! -f android/settings.gradle.kts ]]; then
+            npx cap add android
+          fi
+          echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" > android/local.properties
+          npx cap sync android
+          node scripts/install-native-stockfish-android.mjs android
+          node scripts/apply-android-branding.mjs
+          node scripts/ensure-camera-permission.mjs android
+          node scripts/verify-android-project.mjs
+
+      - name: Build debug APK
+        working-directory: ${{ steps.source.outputs.project_dir }}/android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -tq "$APK"
+          unzip -l "$APK" | grep -E ' AndroidManifest\.xml$' > /dev/null
+          unzip -l "$APK" | grep -E ' classes[0-9]*\.dex$' > /dev/null
+          unzip -l "$APK" | grep -E 'lib/arm64-v8a/libstockfish\.so$' > /dev/null
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp "$APK" "$GITHUB_WORKSPACE/output/Co-Vua-ViLa-debug.apk"
+          (cd "$GITHUB_WORKSPACE/output" && sha256sum Co-Vua-ViLa-debug.apk | tee SHA256SUMS.txt)
+          ls -lh "$GITHUB_WORKSPACE/output"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Co-Vua-ViLa-debug-apk
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
