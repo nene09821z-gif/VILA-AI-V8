@@ -1,0 +1,324 @@
+name: Bao Chess Android APK — AUTO UNZIP
+
+# Đặt file này vào .github/workflows/bao-chess.yml
+# Thả ZIP nguồn đầy đủ (vila-chess*.zip) và/hoặc ZIP *PATCH-ONLY* vào thư mục gốc repo.
+# Workflow tự giải nén ZIP đầy đủ mới nhất, tự chép đè các ZIP patch có phiên bản MỚI HƠN,
+# build APK và gửi lại: APK + toàn bộ mã nguồn hoàn chỉnh đã gộp.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_zip:
+        description: "ZIP nguồn đầy đủ ở thư mục gốc repo (để trống = tự chọn bản mới nhất)"
+        required: false
+        default: ""
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chess-bot-auto-unzip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      INCLUDE_STOCKFISH_FULL: "1"
+
+    steps:
+      - name: VERIFY ACTIVE WORKFLOW — AUTO UNZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "WORKFLOW_REVISION=chess-android-auto-unzip-2026-10-22"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Auto-unzip full source and overlay newer PATCH-ONLY ZIPs
+        id: source
+        shell: bash
+        env:
+          INPUT_ZIP: ${{ inputs.source_zip }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re, zipfile
+
+          ws = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chess-bot-source"
+          out.mkdir(parents=True, exist_ok=True)
+          requested = os.environ.get("INPUT_ZIP", "").strip()
+
+          def version(name):
+              m = re.search(r"v?(\d+)[_.](\d+)(?:[_.](\d+))?", name)
+              return tuple(int(x or 0) for x in m.groups()) if m else None
+
+          def vkey(p):
+              return (version(p.name) or (0, 0, 0), p.name)
+
+          def safe_extract(archive, dest):
+              with zipfile.ZipFile(archive) as zf:
+                  entries = zf.infolist()
+                  if len(entries) > 12000:
+                      raise SystemExit(f"{archive.name}: too many entries")
+                  if sum(e.file_size for e in entries) > 700 * 1024 * 1024:
+                      raise SystemExit(f"{archive.name}: expanded size exceeds 700 MB")
+                  bad = zf.testzip()
+                  if bad:
+                      raise SystemExit(f"{archive.name}: corrupt entry {bad}")
+                  root = dest.resolve()
+                  for e in entries:
+                      p = pathlib.PurePosixPath(e.filename)
+                      if p.is_absolute() or ".." in p.parts:
+                          raise SystemExit(f"{archive.name}: unsafe path {e.filename}")
+                      if root not in (root / e.filename).resolve().parents and (root / e.filename).resolve() != root:
+                          raise SystemExit(f"{archive.name}: path escapes target {e.filename}")
+                  zf.extractall(dest)
+
+          def find_projects(base):
+              found = [p.parent for p in base.rglob("package.json")
+                       if "node_modules" not in p.parts and (p.parent / "capacitor.config.json").is_file()]
+              found.sort(key=lambda p: (len(p.parts), str(p)))
+              return found
+
+          zips = sorted(ws.glob("*.zip"), key=vkey)
+          is_patch = lambda p: "patch-only" in p.name.lower()
+          fulls = [p for p in zips if not is_patch(p) and re.match(r"(?i)(vila|co[_-]?vua)", p.name)]
+          patches = [p for p in zips if is_patch(p)]
+
+          if requested:
+              base = ws / requested
+              if not base.is_file():
+                  raise SystemExit(f"source_zip not found: {requested}")
+          else:
+              base = fulls[-1] if fulls else None
+
+          if base is None:
+              if (ws / "package.json").is_file() and (ws / "capacitor.config.json").is_file():
+                  print("No source ZIP found; using the repository root as the project.")
+                  project = ws
+              else:
+                  raise SystemExit("No full source ZIP (vila-chess*.zip, not *patch-only*) and no Capacitor project at the repo root.")
+          else:
+              print(f"Base source ZIP: {base.name}")
+              safe_extract(base, out)
+              roots = find_projects(out)
+              if not roots:
+                  raise SystemExit(f"No Capacitor project (package.json + capacitor.config.json) in {base.name}.")
+              shallow = len(roots[0].parts)
+              top = [r for r in roots if len(r.parts) == shallow]
+              if len(top) != 1:
+                  raise SystemExit("Ambiguous project roots: " + ", ".join(map(str, top)))
+              project = top[0]
+
+          # Overlay PATCH-ONLY zips whose version is newer than the base, oldest first.
+          base_v = version(base.name) if base is not None else None
+          applied = []
+          for patch in patches:
+              pv = version(patch.name)
+              if pv is None or (base_v is not None and pv <= base_v):
+                  print(f"Skip patch (not newer than base / no version): {patch.name}")
+                  continue
+              print(f"Overlay patch {pv}: {patch.name}")
+              safe_extract(patch, project)
+              applied.append(patch.name)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"project_dir={project}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("### Auto unzip\n")
+              f.write(f"- Base: `{base.name if base else 'repository root'}`\n")
+              f.write(f"- Patches applied: {', '.join(f'`{n}`' for n in applied) or 'none'}\n")
+          print(f"Using project: {project}")
+          PY
+
+      - name: Package complete merged source ZIP
+        shell: bash
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          VERSION="$(node -p "require('./package.json').version")"
+          python3 - "$GITHUB_WORKSPACE/output/vila-chess-v${VERSION}-complete-source.zip" <<'PY'
+          import pathlib, sys, zipfile
+          skip = {"node_modules", "android", "dist", ".git", "__pycache__"}
+          target = pathlib.Path(sys.argv[1])
+          root = pathlib.Path(".").resolve()
+          with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+              for p in sorted(root.rglob("*")):
+                  rel = p.relative_to(root)
+                  if p.is_file() and not (set(rel.parts) & skip) and "libstockfish.so" not in p.name:
+                      zf.write(p, rel.as_posix())
+          print(f"Wrote {target.name}: {target.stat().st_size / 1048576:.2f} MiB")
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "tools platform-tools platforms;android-35 build-tools;35.0.0"
+
+      - name: Download and verify native Stockfish Android ARM64
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: bash scripts/fetch-native-stockfish-android.sh
+
+      - name: Install Node dependencies
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        env:
+          REQUIRE_STOCKFISH: "1"
+          REQUIRE_STOCKFISH_10: "1"
+        run: npm install --no-audit --no-fund
+
+      - name: Check source syntax
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          find src server scripts tests -type f \( -name '*.js' -o -name '*.mjs' \) -print0 \
+            | xargs -0 -r -n1 node --check
+          python3 -m py_compile scripts/package-android-source.py
+
+      # Tests are a required quality gate: a failure blocks APK packaging.
+      - name: Run tests
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        run: npm test
+
+      - name: Build web assets
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        env:
+          REQUIRE_STOCKFISH: "1"
+          REQUIRE_STOCKFISH_10: "1"
+          REQUIRE_OPENING_CATALOG: "1"
+          REQUIRE_PIECE_SETS: "1"
+        run: npm run build
+
+      - name: Generate, brand, and verify Android project
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
+        env:
+          REQUIRE_STOCKFISH: "1"
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f android/settings.gradle && ! -f android/settings.gradle.kts ]]; then
+            npx cap add android
+          fi
+          echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" > android/local.properties
+
+          npx cap sync android
+          # Must run right after sync: installs libstockfish.so + the UCI bridge that
+          # verify-android-project.mjs and the Gradle packaging checks require.
+          node scripts/install-native-stockfish-android.mjs android
+          node scripts/apply-android-branding.mjs
+
+          # Hand-tracking camera permission, applied AFTER sync/branding and BEFORE verification.
+          python3 - <<'PY'
+          import re, pathlib, sys
+          mf = pathlib.Path("android/app/src/main/AndroidManifest.xml")
+          if not mf.is_file():
+              sys.exit("AndroidManifest.xml not found: " + str(mf))
+          xml = mf.read_text(encoding="utf-8")
+          if "android.permission.CAMERA" not in xml:
+              m = re.search(r"<manifest\b[^>]*>", xml)
+              if not m:
+                  sys.exit("Invalid AndroidManifest.xml: no <manifest> element")
+              add = ('\n    <uses-permission android:name="android.permission.CAMERA" />'
+                     '\n    <uses-feature android:name="android.hardware.camera" android:required="false" />')
+              mf.write_text(xml[:m.end()] + add + xml[m.end():], encoding="utf-8")
+              print("Added CAMERA permission to AndroidManifest.xml")
+          else:
+              print("CAMERA permission already present.")
+          PY
+          node scripts/ensure-camera-permission.mjs android
+          node scripts/verify-android-project.mjs
+
+      - name: Build debug APK
+        working-directory: ${{ steps.source.outputs.project_dir }}/android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK integrity and package contents
+        id: apk
+        working-directory: ${{ steps.source.outputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [[ ! -s "$APK" ]]; then
+            echo "::error::APK missing or empty: $APK"
+            find android/app/build/outputs -maxdepth 5 -type f -print || true
+            exit 1
+          fi
+
+          unzip -t "$APK" >/dev/null
+
+          python3 - "$APK" <<'PY'
+          import pathlib
+          import sys
+          import zipfile
+
+          apk = pathlib.Path(sys.argv[1])
+
+          if not zipfile.is_zipfile(apk):
+              raise SystemExit("APK is not a valid ZIP-based Android package")
+
+          with zipfile.ZipFile(apk) as zf:
+              bad = zf.testzip()
+              if bad:
+                  raise SystemExit(f"Corrupt APK entry: {bad}")
+
+              names = set(zf.namelist())
+
+              if "AndroidManifest.xml" not in names:
+                  raise SystemExit("APK is missing AndroidManifest.xml")
+
+              dex_files = [
+                  n for n in names
+                  if n == "classes.dex"
+                  or (n.startswith("classes") and n.endswith(".dex") and n[7:-4].isdigit())
+              ]
+              if not dex_files:
+                  raise SystemExit("APK contains no DEX bytecode")
+
+              if "lib/arm64-v8a/libstockfish.so" not in names:
+                  raise SystemExit("APK is missing lib/arm64-v8a/libstockfish.so (native Stockfish)")
+
+              print("APK ZIP integrity: PASS")
+              print("Android manifest: PASS")
+              print("DEX files:", ", ".join(sorted(dex_files)))
+              print("Native Stockfish ARM64: PASS")
+          PY
+
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp "$APK" "$GITHUB_WORKSPACE/output/Chess-Bot-debug.apk"
+          cmp "$APK" "$GITHUB_WORKSPACE/output/Chess-Bot-debug.apk"
+
+          (cd "$GITHUB_WORKSPACE/output" && sha256sum ./*.apk ./*.zip | tee SHA256SUMS.txt)
+          ls -lh "$GITHUB_WORKSPACE/output"
+
+      - name: Upload APK + complete source
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chess-Bot-APK-and-complete-source
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
